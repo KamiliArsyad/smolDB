@@ -3,12 +3,15 @@
 #include <array>
 #include <atomic>
 #include <boost/serialization/access.hpp>
+#include <boost/serialization/binary_object.hpp>
 #include <boost/serialization/unordered_map.hpp>
 #include <boost/serialization/vector.hpp>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <list>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -237,6 +240,79 @@ public:
 
     return vec;
   }
+};
+
+/* --------- WAL-related ---------------*/
+using LSN = uint64_t;
+enum LR_TYPE
+{
+  UPDATE,
+  COMMIT,
+  ABORT,
+};
+
+struct LogRecordHeader
+{
+
+  LSN lsn;
+  LSN prev_lsn;
+  LR_TYPE type;
+  uint32_t lr_length; // Record length including the header
+  // Todo: add checksum
+};
+
+struct UpdatePagePayload {
+  uint32_t page_id;
+  uint16_t offset;
+  uint16_t length;
+  std::byte data[];
+
+  /**
+   * @brief Allocate header + 2*length bytes in one go
+   * @param pid {in} the page id of the updated record.
+   * @param off {in} the offset within page of the updated record
+   * @param len {in} the length of the block updated
+   * @return A struct
+   */
+  static UpdatePagePayload* create(uint32_t pid, uint16_t off, uint16_t len) {
+    // sizeof(header) + payload for bef+aft
+    size_t total = sizeof(UpdatePagePayload) + size_t(len)*2*sizeof(std::byte);
+    void* mem = operator new(total);
+    return new(mem) UpdatePagePayload{pid, off, len};
+  }
+
+  // convenience accessors
+  std::byte* bef() { return data; }
+  std::byte* aft() { return data + length; }
+
+  // intrusively serialize header + payload as raw bytes
+  template<class Archive>
+  void serialize(Archive& ar, unsigned /*ver*/) {
+    ar & page_id & offset & length;
+    ar & boost::serialization::make_binary_object(data, length*2);
+  }
+};
+
+class WAL
+{
+private:
+  std::filesystem::path path_;
+public:
+  explicit WAL(const std::filesystem::path& path)
+    : path_(path)
+  {
+
+  }
+
+  /**
+   * @brief Appends a log record to the WAL file.
+   * @param hdr {in} The header of the log record.
+   * @param payload {in} The log record payload.
+   * @return The LSN of the log.
+   */
+  LSN append_record(const LogRecordHeader& hdr, const void* payload = nullptr);
+
+  void recover(BufferPool &bfr_manager);
 };
 
 #endif //STORAGE_H
