@@ -63,12 +63,14 @@ public:
 };
 
 typedef uint64_t PageID;
+using LSN = uint64_t;
 typedef uint64_t RID;
 constexpr size_t PAGE_SIZE = 8192;
 
 struct PageHeader
 {
   PageID id;
+  LSN page_lsn; // Latest LSN of the log that modifies this page.
 };
 
 struct alignas(64) Page
@@ -243,7 +245,6 @@ public:
 };
 
 /* --------- WAL-related ---------------*/
-using LSN = uint64_t;
 enum LR_TYPE
 {
   UPDATE,
@@ -251,15 +252,16 @@ enum LR_TYPE
   ABORT,
 };
 
+#pragma pack(push, 1)
 struct LogRecordHeader
 {
-
   LSN lsn;
   LSN prev_lsn;
   LR_TYPE type;
   uint32_t lr_length; // Record length including the header
   // Todo: add checksum
 };
+#pragma pack(pop)
 
 struct UpdatePagePayload {
   uint32_t page_id;
@@ -282,8 +284,8 @@ struct UpdatePagePayload {
   }
 
   // convenience accessors
-  std::byte* bef() { return data; }
-  std::byte* aft() { return data + length; }
+  const std::byte* bef() const { return data; }
+  const std::byte* aft() const { return data + length; }
 
   // intrusively serialize header + payload as raw bytes
   template<class Archive>
@@ -293,16 +295,18 @@ struct UpdatePagePayload {
   }
 };
 
-class WAL
+class WAL_mgr
 {
 private:
   std::filesystem::path path_;
-public:
-  explicit WAL(const std::filesystem::path& path)
-    : path_(path)
-  {
+  std::ofstream wal_stream_;
+  LSN next_lsn_ = 1;
+  LSN flushed_lsn_ = 0;
 
-  }
+public:
+  explicit WAL_mgr(const std::filesystem::path& path)
+    : path_(path), wal_stream_(path, std::ios::binary | std::ios::app)
+  {}
 
   /**
    * @brief Appends a log record to the WAL file.
@@ -310,9 +314,9 @@ public:
    * @param payload {in} The log record payload.
    * @return The LSN of the log.
    */
-  LSN append_record(const LogRecordHeader& hdr, const void* payload = nullptr);
+  LSN append_record(LogRecordHeader& hdr, const void* payload = nullptr);
 
-  void recover(BufferPool &bfr_manager);
+  void recover(BufferPool &bfr_manager, const std::filesystem::path& path);
 };
 
 #endif //STORAGE_H
