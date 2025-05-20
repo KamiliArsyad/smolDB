@@ -26,19 +26,25 @@ FrameIter BufferPool::lookup_or_load_frame(PageID pid) {
     return cache_[pid];
   }
 
-  // TODO: Replace the following stub.
-
   if (lru_lists_.size() == capacity_) {
     auto victim = std::prev(lru_lists_.end());
-    cache_.erase(victim->page.hdr.id);
-    lru_lists_.erase(victim);
+    while (victim->pin_count.load() != 0)
+    {
+      victim = std::prev(victim);
+    }
+
+    if (victim->pin_count.load() == 0)
+    {
+      flush_page(victim);
+      cache_.erase(victim->page.hdr.id);
+      lru_lists_.erase(victim);
+    }
   }
 
   const FrameIter it = lru_lists_.emplace(lru_lists_.begin());
+  disk_mgr_->read_page(pid, it->page);
 
   it->page.hdr.id = pid;
-  std::memset(it->page.data(), 0, PAGE_SIZE - sizeof(PageHeader));
-
   it->pin_count.store(0, std::memory_order_relaxed);
   it->is_dirty.store(false, std::memory_order_relaxed);
 
@@ -61,7 +67,7 @@ void BufferPool::unpin_page(PageID pid, bool mark_dirty)
   if (mark_dirty) f.is_dirty.store(true, std::memory_order_relaxed);
 
   const int pins_left = f.pin_count.fetch_sub(
-    true,
+    1,
     std::memory_order_relaxed);
   assert(pins_left >= 0 && "pin_count_underflow");
 
@@ -72,6 +78,72 @@ void BufferPool::unpin_page(PageID pid, bool mark_dirty)
       lru_lists_.end(),
       lru_lists_,
       it->second);
+  }
+}
+
+void BufferPool::flush_page(FrameIter it) const
+{
+  if (!it->is_dirty.load()) return;
+
+  wal_mgr_->flush_to_lsn(it->page.hdr.page_lsn);
+
+  disk_mgr_->write_page(it->page.hdr.id, it->page);
+
+  it->is_dirty.store(false);
+}
+
+void BufferPool::flush_all()
+{
+  for (auto it = lru_lists_.begin(); it != lru_lists_.end(); ++it)
+  {
+    flush_page(it);
+  }
+}
+
+void Disk_mgr::ensure_open() {
+  if (!file_.is_open()) {
+    file_.open(path_, std::ios::in | std::ios::out | std::ios::binary);
+    if (!file_.is_open()) {
+      throw std::runtime_error("DiskManager: cannot reopen file " + path_.string());
+    }
+  }
+}
+
+void Disk_mgr::read_page(PageID page_id, Page& page) {
+  ensure_open();
+  auto off = offset_for(page_id);
+  file_.seekg(off, std::ios::beg);
+  if (!file_) {
+    file_.clear();
+    // reading beyond EOF: zero-fill entire page
+    std::memset(&page, 0, PAGE_SIZE);
+    return;
+  }
+
+  file_.read(reinterpret_cast<char*>(&page), PAGE_SIZE);
+  std::streamsize got = file_.gcount();
+  if (got < static_cast<std::streamsize>(PAGE_SIZE)) {
+    // zero-fill the rest
+    std::memset(reinterpret_cast<char*>(&page) + got, 0, PAGE_SIZE - got);
+  }
+}
+
+void Disk_mgr::write_page(PageID page_id, const Page& page) {
+  ensure_open();
+  auto off = offset_for(page_id);
+  file_.seekp(off, std::ios::beg);
+  if (!file_) {
+    throw std::runtime_error("DiskManager: seekp failed");
+  }
+
+  file_.write(reinterpret_cast<const char*>(&page), PAGE_SIZE);
+  if (!file_) {
+    throw std::runtime_error("DiskManager: write failed");
+  }
+
+  file_.flush();
+  if (!file_) {
+    throw std::runtime_error("DiskManager: flush failed");
   }
 }
 

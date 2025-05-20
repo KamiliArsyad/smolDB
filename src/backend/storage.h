@@ -96,14 +96,19 @@ struct Frame
 using FrameIter = std::list<Frame>::iterator;
 
 class PageGuard;
+class Disk_mgr;
+class WAL_mgr;
 
 /**
- * LRU BufferPool stub (in memory).
+ * LRU BufferPool.
  */
 class BufferPool
 {
 private:
   size_t capacity_;
+
+  Disk_mgr* disk_mgr_;
+  WAL_mgr* wal_mgr_;
 
   /**
    * @brief `begin` is MRU; `end()` is LRU.
@@ -114,6 +119,12 @@ private:
   FrameIter lookup_or_load_frame(PageID pid);
 public:
   explicit BufferPool(const size_t capacity) : capacity_(capacity) {
+    cache_.reserve(capacity_);
+  }
+
+  explicit BufferPool(const size_t cap, Disk_mgr* d, WAL_mgr* w)
+    : capacity_(cap), disk_mgr_(d), wal_mgr_(w)
+  {
     cache_.reserve(capacity_);
   }
 
@@ -128,6 +139,56 @@ public:
    * @param mark_dirty
    */
   void unpin_page(PageID pid, bool mark_dirty);
+
+  void flush_page(FrameIter it) const;
+
+  /**
+   * @brief For checkpointing.
+   */
+  void flush_all();
+};
+
+class Disk_mgr {
+public:
+  explicit Disk_mgr(const std::filesystem::path& db_file_path)
+    : path_(db_file_path)
+  {
+    // Try open existing file
+    file_.open(path_, std::ios::in | std::ios::out | std::ios::binary);
+    if (!file_.is_open()) {
+      // Create it if missing
+      std::ofstream create(path_, std::ios::out | std::ios::binary);
+      create.close();
+      // Re-open for read/write
+      file_.open(path_, std::ios::in | std::ios::out | std::ios::binary);
+    }
+    if (!file_.is_open()) {
+      throw std::runtime_error("DiskManager: cannot open file " + path_.string());
+    }
+  }
+  ~Disk_mgr()
+  {
+    if (file_.is_open()) file_.close();
+  }
+
+  // Reads the PAGE_SIZE bytes for `page_id` into `page`.
+  // If the file is too short, zero-fills the rest of `page`.
+  void read_page(PageID page_id, Page& page);
+
+  // Writes the PAGE_SIZE bytes from `page` at the offset for `page_id`.
+  // Always flushes to ensure durability.
+  void write_page(PageID page_id, const Page& page);
+
+private:
+  std::filesystem::path path_;
+  std::fstream         file_;
+
+  // Compute the byte offset for the start of page `page_id`.
+  static constexpr std::streamoff offset_for(PageID pid) {
+    return static_cast<std::streamoff>(pid) * PAGE_SIZE;
+  }
+
+  void ensure_open();
 };
 
 /**
@@ -317,6 +378,11 @@ public:
   LSN append_record(LogRecordHeader& hdr, const void* payload = nullptr);
 
   void recover(BufferPool &bfr_manager, const std::filesystem::path& path);
+
+  void flush_to_lsn(LSN target)
+  {
+    if (target > flushed_lsn_) wal_stream_.flush();
+  }
 };
 
 #endif //STORAGE_H
