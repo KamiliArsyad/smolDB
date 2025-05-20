@@ -9,7 +9,9 @@ TEST(HeapFileTest, AppendScan)
 {
   auto tmp = std::filesystem::temp_directory_path();
   auto path = tmp/"trx.dat";
-  const int test_size = 1000;
+  // Clear previous run(s)
+  std::remove(path.c_str());
+  constexpr int test_size = 1000;
 
   HeapFile<TxHeader> hf(path.string());
 
