@@ -8,11 +8,29 @@ static auto frame_of(BufferPool& bp, PageID pid) {
   return bp.cache_.at(pid);       // cache_ has been made public by the macro
 }
 
+static auto get_disk_mgr(std::filesystem::path &tmp_path)
+{
+  const auto path = tmp_path/"disk.dat";
+  std::remove(path.c_str());
+  return new Disk_mgr(path);
+}
+
+static auto get_wal_mgr(std::filesystem::path &tmp_path)
+{
+  const auto path = tmp_path/"wal.dat";
+  std::remove(path.c_str());
+  return new WAL_mgr(path);
+}
+
 /* -------- tests ----------------------------------------------------- */
 
 TEST(BufferPool, PinUnpinCounts)
 {
-  BufferPool bp{/*capacity=*/2};
+  auto tmp = std::filesystem::temp_directory_path();
+  Disk_mgr *disk_mgr = get_disk_mgr(tmp);
+  WAL_mgr *wal_mgr = get_wal_mgr(tmp);
+
+  BufferPool bp{2, disk_mgr, wal_mgr};
 
   {
     auto g1 = bp.fetch_page(7);
@@ -30,7 +48,11 @@ TEST(BufferPool, PinUnpinCounts)
 
 TEST(BufferPool, DirtyBitPersists)
 {
-  BufferPool bp{1};
+  auto tmp = std::filesystem::temp_directory_path();
+  Disk_mgr *disk_mgr = get_disk_mgr(tmp);
+  WAL_mgr *wal_mgr = get_wal_mgr(tmp);
+
+  BufferPool bp{1, disk_mgr, wal_mgr};
   {
     auto g = bp.fetch_page(13);
     g.mark_dirty();
@@ -41,7 +63,11 @@ TEST(BufferPool, DirtyBitPersists)
 
 TEST(BufferPool, EvictionAtCapacityOne)
 {
-  BufferPool bp{1};
+  auto tmp = std::filesystem::temp_directory_path();
+  Disk_mgr *disk_mgr = get_disk_mgr(tmp);
+  WAL_mgr *wal_mgr = get_wal_mgr(tmp);
+
+  BufferPool bp{1, disk_mgr, wal_mgr};
 
   /* first page fills the only slot */
   { auto g = bp.fetch_page(1); }
@@ -56,7 +82,11 @@ TEST(BufferPool, EvictionAtCapacityOne)
 
 TEST(BufferPool, MRUTouchOnHit)
 {
-  BufferPool bp{2};
+  auto tmp = std::filesystem::temp_directory_path();
+  Disk_mgr *disk_mgr = get_disk_mgr(tmp);
+  WAL_mgr *wal_mgr = get_wal_mgr(tmp);
+
+  BufferPool bp{2, disk_mgr, wal_mgr};
 
   { bp.fetch_page(1); }          // LRU list: [1]
   { bp.fetch_page(2); }          //           [2,1] (2 = MRU)
@@ -69,7 +99,11 @@ TEST(BufferPool, MRUTouchOnHit)
 
 TEST(BufferPool, NoErrorOverload)
 {
-  BufferPool bp{100};
+  auto tmp = std::filesystem::temp_directory_path();
+  Disk_mgr *disk_mgr = get_disk_mgr(tmp);
+  WAL_mgr *wal_mgr = get_wal_mgr(tmp);
+
+  BufferPool bp{100, disk_mgr, wal_mgr};
 
   for (int i = 0; i < 1000; i++)
   {

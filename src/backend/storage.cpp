@@ -101,6 +101,7 @@ void BufferPool::flush_all()
 }
 
 void Disk_mgr::ensure_open() {
+  assert(path_ != "");
   if (!file_.is_open()) {
     file_.open(path_, std::ios::in | std::ios::out | std::ios::binary);
     if (!file_.is_open()) {
