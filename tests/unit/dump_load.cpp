@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "storage.h"
-#include "BufferPool.h"
+#include "bfrpl.h"
 
 TEST(DumpLoadTest, Storage)
 {

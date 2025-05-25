@@ -1,4 +1,5 @@
-#include "BufferPool.h"
+#include "bfrpl.h"
+#include "dsk_mgr.h"
 
 FrameIter BufferPool::lookup_or_load_frame(PageID pid) {
   if (cache_.contains(pid))

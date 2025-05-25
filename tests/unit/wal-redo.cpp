@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 
-#include "storage.h"
-#include "BufferPool.h"
+#include "bfrpl.h"
+#include "dsk_mgr.h"
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Helpers
