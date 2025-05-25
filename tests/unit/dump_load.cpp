@@ -5,7 +5,7 @@
 #include <iterator>
 #include <vector>
 
-#include "../../src/backend/storage.h"
+#include "storage.h"
 
 TEST(DumpLoadTest, Storage)
 {

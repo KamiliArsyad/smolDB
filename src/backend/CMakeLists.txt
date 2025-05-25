@@ -3,6 +3,8 @@ file(GLOB BACKEND_SRCS
         *.h
 )
 
+add_subdirectory(storage)
+
 add_library(backend_lib STATIC ${BACKEND_SRCS})
 
 target_include_directories(backend_lib
@@ -16,7 +18,10 @@ find_package(
 )
 
 # Might need to consider linking the library in private instead.
-target_link_libraries(backend_lib PUBLIC Boost::serialization)
+target_link_libraries(backend_lib
+    PUBLIC Boost::serialization
+    storage_lib
+)
 
 target_link_libraries(smolDB
         PRIVATE backend_lib

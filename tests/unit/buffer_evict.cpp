@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 #define private public              // <- test-only peek
-#include "../../src/backend/storage.h"
+#include "storage.h"
 #undef  private
 
 /* -------- helpers --------------------------------------------------- */
