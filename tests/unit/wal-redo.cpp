@@ -1,3 +1,4 @@
+#include <cstring>
 #include <gtest/gtest.h>
 
 #include "bfrpl.h"

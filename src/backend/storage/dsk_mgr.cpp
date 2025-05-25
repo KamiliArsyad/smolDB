@@ -1,5 +1,7 @@
 #include "dsk_mgr.h"
 
+#include <cstring>
+
 void Disk_mgr::ensure_open() {
   assert(path_ != "");
   if (!file_.is_open()) {

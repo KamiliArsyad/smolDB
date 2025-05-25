@@ -1,5 +1,8 @@
 #include "wal_mgr.h"
 
+#include <cstring>
+#include <vector>
+
 #include "bfrpl.h"
 
 LSN WAL_mgr::append_record(LogRecordHeader& hdr, const void* payload)

@@ -4,6 +4,7 @@ file(GLOB BACKEND_SRCS
 )
 
 add_subdirectory(storage)
+add_subdirectory(access)
 
 add_library(backend_lib STATIC ${BACKEND_SRCS})
 
@@ -21,6 +22,7 @@ find_package(
 target_link_libraries(backend_lib
     PUBLIC Boost::serialization
     storage_lib
+    access_lib
 )
 
 target_link_libraries(smolDB

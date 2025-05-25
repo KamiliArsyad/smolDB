@@ -2,9 +2,20 @@
 #define HEAPFILE_H
 #include <filesystem>
 #include <fstream>
+#include <vector>
 
 #include "storage.h"
 
+/**
+ * @brief HeapFile manages the logical access of records.
+ * @details HeapFile is basically a logical "Table" abstraction.
+ *            It understands page layout, record layout,
+ *            free space management at the page level, record
+ *            insertion/deletion/update management logic, and
+ *            how to navigate between pages.
+ *            TODO: This is currently a stub; connect with the rest.
+ * @tparam Tuple The record type.
+ */
 template <typename Tuple>
 class HeapFile
 {

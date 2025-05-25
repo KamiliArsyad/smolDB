@@ -5,8 +5,7 @@
 #include <iterator>
 #include <vector>
 
-#include "storage.h"
-#include "bfrpl.h"
+#include "access.h"
 
 TEST(DumpLoadTest, Storage)
 {

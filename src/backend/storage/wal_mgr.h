@@ -1,6 +1,8 @@
 #ifndef WAL_MGR_H
 #define WAL_MGR_H
 #include <cstddef>
+#include <filesystem>
+#include <fstream>
 
 #include "storage.h"
 

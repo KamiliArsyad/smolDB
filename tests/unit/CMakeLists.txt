@@ -13,4 +13,4 @@ target_include_directories(Google_Tests_run
             ${CMAKE_SOURCE_DIR}/src/
 )
 
-target_link_libraries(Google_Tests_run gtest gtest_main backend_lib storage_lib)
+target_link_libraries(Google_Tests_run gtest gtest_main backend_lib storage_lib access_lib)
