@@ -197,7 +197,7 @@ void WAL_mgr::recover(BufferPool& bfr_manager, const std::filesystem::path& path
         page->hdr.page_lsn = hdr.lsn;
 
         // 4) unpin as dirty so it'll be flushed later
-        bfr_manager.unpin_page(upd->page_id, true);
+        page.mark_dirty();
         break;
     }
 
