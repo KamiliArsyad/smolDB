@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "storage.h"
+#include "BufferPool.h"
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Helpers

@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #define private public              // <- test-only peek
 #include "storage.h"
+#include "BufferPool.h"
 #undef  private
 
 /* -------- helpers --------------------------------------------------- */

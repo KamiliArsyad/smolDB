@@ -2,6 +2,7 @@
 #include <gtest/gtest.h>
 
 #include "storage.h"
+#include "BufferPool.h"
 
 struct TxHeader { int32_t id; std::chrono::system_clock::time_point t; };
 
