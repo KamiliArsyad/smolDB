@@ -1,8 +1,10 @@
+#include "dsk_mgr.h"
 #include "storage.h"
 
 #ifndef BUFFERPOOL_H
 #define BUFFERPOOL_H
 
+class WAL_mgr;
 class PageGuard;
 
 /**

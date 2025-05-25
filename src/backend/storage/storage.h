@@ -95,9 +95,4 @@ struct Frame
 
 using FrameIter = std::list<Frame>::iterator;
 
-class PageGuard;
-class Disk_mgr;
-class WAL_mgr;
-class BufferPool;
-
 #endif //STORAGE_H

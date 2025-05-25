@@ -4,6 +4,8 @@
 
 #include "storage.h"
 
+class BufferPool;
+
 /* --------- WAL-related ---------------*/
 enum LR_TYPE
 {
