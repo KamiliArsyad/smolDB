@@ -2,6 +2,7 @@
 #define private public              // <- test-only peek
 #include "bfrpl.h"
 #include "dsk_mgr.h"
+#include "wal_mgr.h"
 #undef  private
 
 /* -------- helpers --------------------------------------------------- */

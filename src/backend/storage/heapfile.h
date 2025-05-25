@@ -1,5 +1,9 @@
 #ifndef HEAPFILE_H
 #define HEAPFILE_H
+#include <filesystem>
+#include <fstream>
+
+#include "storage.h"
 
 template <typename Tuple>
 class HeapFile

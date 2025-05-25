@@ -2,6 +2,7 @@
 
 #include "bfrpl.h"
 #include "dsk_mgr.h"
+#include "wal_mgr.h"
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Helpers
