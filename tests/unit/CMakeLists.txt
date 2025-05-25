@@ -7,6 +7,7 @@ set(UNIT_SRCS
         ${CMAKE_SOURCE_DIR}/src/backend/storage.cpp
         buffer_evict.cpp
         heap_file_load_scan.cpp
+        wal-redo.cpp
 )
 
 
