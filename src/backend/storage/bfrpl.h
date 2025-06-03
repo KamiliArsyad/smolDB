@@ -70,9 +70,9 @@ public:
   PageGuard() noexcept = default;
 
   PageGuard(BufferPool* p, FrameIter it) noexcept:
-  pool(p), it(it)
+  pool(p), it_(it)
   {
-    ++it->pin_count;
+    ++it_->pin_count;
   }
 
   PageGuard(PageGuard&& g) noexcept
@@ -92,17 +92,23 @@ public:
   }
 
   // -- PAGE ACCESS --
-  Page* operator->() const noexcept { return &it->page; }
-  Page& operator* () const noexcept { return  it->page; }
+  Page* operator->() const noexcept { return &it_->page; }
+  Page& operator* () const noexcept { return  it_->page; }
 
   void mark_dirty() const noexcept
   {
-    it->is_dirty = true;
+    it_->is_dirty = true;
   }
+
+  /**
+   * @brief Get underlying iterator if needed by HeapFile, though direct use is discouraged
+   * @return The underlying {FrameIter} iterator.
+   */
+  FrameIter get_frame_iterator() const { return it_; }
 
 private:
   BufferPool*  pool {nullptr};
-  FrameIter it;                   // nullptr-equivalent means “empty”
+  FrameIter it_{};
 
   void release() noexcept
   {
@@ -112,6 +118,7 @@ private:
       pool->unpin_page(it->page.hdr.id, it->is_dirty);
     }
     pool = nullptr;
+    it_ = {};
   }
 
   void swap(PageGuard& g) noexcept
