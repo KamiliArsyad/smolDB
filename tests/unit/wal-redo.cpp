@@ -79,8 +79,6 @@ TEST(WAL_mgr, AppendRecover)
   uint64_t read_back{};
   std::memcpy(&read_back, g->data() + kOff, sizeof(read_back));
   EXPECT_EQ(read_back, kVal);                   // after-image applied
-
-  pool.unpin_page(kPid, false);
 }
 
 /**

@@ -15,8 +15,8 @@
 
 typedef uint64_t PageID;
 using LSN = uint64_t;
-typedef uint64_t RID;
 constexpr size_t PAGE_SIZE = 8192;
+constexpr PageID INVALID_PAGE_ID = static_cast<PageID>(-1);
 
 struct PageHeader
 {

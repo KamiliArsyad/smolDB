@@ -56,6 +56,11 @@ public:
    * @brief For checkpointing.
    */
   void flush_all();
+
+  /**
+   * @brief Allocates a new page ID using the underlying Disk_mgr.
+   */
+  PageID allocate_page();
 };
 
 /**
@@ -115,7 +120,7 @@ private:
     if (pool)
     {
       // guard has a page
-      pool->unpin_page(it->page.hdr.id, it->is_dirty);
+      pool->unpin_page(it_->page.hdr.id, it_->is_dirty);
     }
     pool = nullptr;
     it_ = {};
@@ -124,7 +129,7 @@ private:
   void swap(PageGuard& g) noexcept
   {
     std::swap(pool, g.pool);
-    std::swap(it  , g.it  );
+    std::swap(it_, g.it_);
   }
 };
 

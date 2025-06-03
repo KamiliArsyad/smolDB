@@ -49,3 +49,11 @@ void Disk_mgr::write_page(PageID page_id, const Page& page) {
     throw std::runtime_error("DiskManager: flush failed");
   }
 }
+
+PageID Disk_mgr::allocate_page() {
+  // Atomically fetch and increment. The returned value is the new PageID.
+  // This effectively reserves a new page ID. The actual file extension
+  // happens when write_page is called for this new page_id if it's beyond
+  // the current file size.
+  return next_page_id_.fetch_add(1);
+}
