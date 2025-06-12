@@ -9,6 +9,10 @@
 #include "storage/bfrpl.h"
 #include "storage/dsk_mgr.h"
 #include "storage/wal_mgr.h"
+#include "executor/trx.h"
+#include "executor/trx_mgr.h"
+
+class Transaction;
 
 class SmolDB
 {
@@ -57,6 +61,21 @@ class SmolDB
    */
   Table<>* get_table(uint8_t table_id);
 
+  /**
+   * @brief Begins a new transaction.
+   * @return The ID of the transaction.
+   */
+  TransactionID begin_transaction();
+
+  /**
+   * @brief Commits an existing transaction.
+   */
+  void commit_transaction(TransactionID txn_id);
+
+  /**
+   * @brief Aborts an existing transaction.
+   */
+  void abort_transaction(TransactionID txn_id);
  private:
   friend class HeapFileTest;  // Allow test to access internals
 
@@ -70,6 +89,8 @@ class SmolDB
   std::unique_ptr<Disk_mgr> disk_mgr_;
   std::unique_ptr<WAL_mgr> wal_mgr_;
   std::unique_ptr<BufferPool> buffer_pool_;
+  std::unique_ptr<LockManager> lock_manager_;
+  std::unique_ptr<TransactionManager> txn_manager_;
   std::unique_ptr<Catalog> catalog_;
 };
 

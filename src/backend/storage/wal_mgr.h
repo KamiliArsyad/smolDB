@@ -11,6 +11,7 @@ class BufferPool;
 /* --------- WAL-related ---------------*/
 enum LR_TYPE
 {
+  BEGIN,
   UPDATE,
   COMMIT,
   ABORT,
@@ -21,6 +22,7 @@ struct LogRecordHeader
 {
   LSN lsn;
   LSN prev_lsn;
+  uint64_t txn_id;
   LR_TYPE type;
   uint32_t lr_length; // Record length including the header
   // Todo: add checksum

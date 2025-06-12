@@ -3,6 +3,7 @@
 #include <cassert>
 #include <cstring>
 
+#include "../executor/trx.h"
 #include "wal_mgr.h"
 
 // Each slot stores: [ 4-byte tuple length | tuple data ... ]
@@ -61,12 +62,14 @@ std::byte *HeapFile::get_tuple_data_ptr(std::byte *slot_ptr)
   return slot_ptr + TUPLE_LENGTH_PREFIX_SIZE;
 }
 
-RID HeapFile::append(std::span<const std::byte> tuple_data)
+RID HeapFile::append(Transaction* txn, std::span<const std::byte> tuple_data)
 {
   if (tuple_data.size() > max_tuple_size_)
   {
     throw std::invalid_argument("Tuple is larger than max_tuple_size");
   }
+
+  assert(txn != nullptr && "Cannot perform append without a transaction");
 
   PageID current_pid = last_page_id_.load();
   while (true)
@@ -96,12 +99,16 @@ RID HeapFile::append(std::span<const std::byte> tuple_data)
 
         LogRecordHeader hdr{};
         hdr.type = UPDATE;
+        hdr.txn_id = txn->get_id();
         hdr.lr_length = sizeof(LogRecordHeader) + sizeof(UpdatePagePayload) +
                         2 * slot_size_;
-        hdr.prev_lsn = 0; // Placeholder; requires transaction context
+        hdr.prev_lsn = txn->get_prev_lsn();
 
         LSN lsn = wal_mgr_->append_record(hdr, payload);
         operator delete(payload);
+
+        // Update the transaction's prev_lsn for chaining
+        txn->set_prev_lsn(lsn);
 
         guard->hdr.page_lsn = lsn;
         set_tuple_size(slot_ptr, tuple_data.size());
@@ -120,8 +127,10 @@ RID HeapFile::append(std::span<const std::byte> tuple_data)
   }
 }
 
-bool HeapFile::get(RID rid, std::vector<std::byte> &out_tuple) const
+bool HeapFile::get(Transaction* txn, RID rid, std::vector<std::byte> &out_tuple) const
 {
+  assert(txn != nullptr && "Cannot perform get without a transaction");
+
   PageGuard guard = buffer_pool_->fetch_page(rid.page_id);
   if (rid.slot >= slots_per_page_)
   {

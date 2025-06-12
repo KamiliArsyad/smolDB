@@ -3,7 +3,6 @@
 set(BACKEND_LIB_SRCS
         smoldb.cpp
         server.cpp
-        executor.cpp
 )
 
 # Define the header files. While not strictly needed for compilation here,
@@ -11,12 +10,12 @@ set(BACKEND_LIB_SRCS
 set(BACKEND_LIB_HDRS
         smoldb.h
         server.h
-        executor.h
 )
 
 # Include subdirectories that define their own libraries (storage_lib, access_lib)
 add_subdirectory(storage)
 add_subdirectory(access)
+add_subdirectory(executor)
 
 # Create the library from its specific sources.
 add_library(backend_lib STATIC
@@ -44,6 +43,7 @@ target_link_libraries(backend_lib
         Boost::serialization
         storage_lib
         access_lib
+        executor_lib
 )
 
 # Link the main executable against our newly defined backend library.

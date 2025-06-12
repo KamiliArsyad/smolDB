@@ -9,6 +9,7 @@
 #include "bfrpl.h" // BufferPool, PageGuard
 #include "storage.h"
 
+class Transaction; // Forward declaration
 class WAL_mgr; // Forward declaration
 
 struct RID
@@ -44,10 +45,10 @@ public:
            size_t max_tuple_size);
 
   // Appends and returns RID of tuple
-  RID append(std::span<const std::byte> tuple_data);
+  RID append(Transaction* txn, std::span<const std::byte> tuple_data);
 
   // Reads a tuple by RID
-  bool get(RID rid, std::vector<std::byte> &out_tuple) const;
+  bool get(Transaction* txn, RID rid, std::vector<std::byte> &out_tuple) const;
 
   // Appends all records to out
   void full_scan(std::vector<std::vector<std::byte>> &out) const;

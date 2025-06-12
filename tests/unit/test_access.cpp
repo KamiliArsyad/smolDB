@@ -16,13 +16,13 @@ class MockHeapFile
  public:
   std::vector<std::vector<std::byte>> rows;
   MockHeapFile(BufferPool*, WAL_mgr*, PageID, size_t) {}
-  RID append(std::span<const std::byte> t)
+  RID append(Transaction*, std::span<const std::byte> t)
   {
     rows.emplace_back(t.begin(), t.end());
     return {static_cast<PageID>(rows.size() - 1), 0};
   }
   void full_scan(std::vector<std::vector<std::byte>>& out) const { out = rows; }
-  bool get(RID rid, std::vector<std::byte>& out) const
+  bool get(Transaction*, RID rid, std::vector<std::byte>& out) const
   {
     if (rid.page_id >= rows.size() || rid.slot != 0) return false;
     out = rows[rid.page_id];
@@ -52,14 +52,29 @@ TEST(TableTest, InsertScanSingleRow)
 {
   Schema schema = make_simple_schema();
   auto mock_hf = std::make_unique<MockHeapFile>(nullptr, nullptr, 0, 256);
-  Table<MockHeapFile> table(std::move(mock_hf), 1, "test_table", schema);
+
+  // Create a minimal, self-contained set of dependencies for this test.
+  auto test_dir = std::filesystem::temp_directory_path() / "table_test_dummy";
+  std::filesystem::create_directories(test_dir);
+  auto dummy_wal_path = test_dir / "dummy.wal";
+  auto lm = std::make_unique<LockManager>();
+  auto wm = std::make_unique<WAL_mgr>(dummy_wal_path);
+  auto tm = std::make_unique<TransactionManager>(lm.get(), wm.get());
+
+  Table<MockHeapFile> table(std::move(mock_hf), 1, "test_table", schema,
+                            lm.get(), tm.get());
+  TransactionID txn_id = tm->begin();
   Row row(schema);
   row.set_value(0, int32_t(100));
   row.set_value(1, std::string("Name100"));
-  table.insert_row(row);
+  table.insert_row(txn_id, row);
+  tm->commit(txn_id);
+
   std::vector<Row> rows = table.scan_all();
   ASSERT_EQ(rows.size(), 1u);
   EXPECT_EQ(boost::get<int32_t>(rows[0].get_value(0)), 100);
+
+  std::filesystem::remove_all(test_dir);
 }
 
 // --------------------------------------------------------------------------------
@@ -73,6 +88,7 @@ class CatalogTest : public ::testing::Test
     test_dir =
         std::filesystem::temp_directory_path() / "catalog_test_integration";
     std::filesystem::remove_all(test_dir);
+    std::filesystem::create_directories(test_dir);
 
     db = std::make_unique<SmolDB>(test_dir, 10);
     db->startup();
@@ -81,6 +97,7 @@ class CatalogTest : public ::testing::Test
   void TearDown() override
   {
     db->shutdown();
+    db.reset();
     std::filesystem::remove_all(test_dir);
   }
 
@@ -116,12 +133,14 @@ TEST_F(CatalogTest, PersistAndReload)
 {
   Schema schema = make_simple_schema();
   db->create_table(22, "users", schema);
+  TransactionID txn_id = db->begin_transaction();
 
   Row row(schema);
   row.set_value("id", 42);
   row.set_value("name", "Zaphod");
   auto* table = db->get_table("users");
-  RID rid = table->insert_row(row);
+  RID rid = table->insert_row(txn_id, row);
+  db->commit_transaction(txn_id);
 
   db->shutdown();
 
@@ -132,7 +151,9 @@ TEST_F(CatalogTest, PersistAndReload)
   auto* reloaded_table = new_db->get_table(22);
   ASSERT_NE(reloaded_table, nullptr);
 
+  TransactionID new_txn_id = new_db->begin_transaction();
   Row out_row;
-  ASSERT_TRUE(reloaded_table->get_row(rid, out_row));
+  ASSERT_TRUE(reloaded_table->get_row(new_txn_id, rid, out_row));
   EXPECT_EQ(boost::get<int32_t>(out_row.get_value("id")), 42);
+  new_db->commit_transaction(new_txn_id);
 }

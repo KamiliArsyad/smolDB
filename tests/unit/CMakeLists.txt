@@ -10,7 +10,7 @@ add_executable(Google_Tests_run ${UNIT_SRCS})
 
 target_include_directories(Google_Tests_run
         PRIVATE
-            ${CMAKE_SOURCE_DIR}/src/
+        ${CMAKE_SOURCE_DIR}/src/
 )
 
-target_link_libraries(Google_Tests_run gtest gtest_main backend_lib storage_lib access_lib)
+target_link_libraries(Google_Tests_run gtest gtest_main backend_lib storage_lib access_lib executor_lib)

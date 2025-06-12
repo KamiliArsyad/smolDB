@@ -13,6 +13,8 @@
 #include <string>
 #include <variant>
 
+#include "../executor/lock_mgr.h"
+#include "../executor/trx_mgr.h"
 #include "../storage/heapfile.h"
 #include "../storage/storage.h"
 
@@ -268,6 +270,8 @@ class Table
   std::string table_name_;
   Schema schema_;
   std::unique_ptr<HeapFileT> heap_file_;
+  LockManager* lock_manager_ = nullptr;        // Not owned
+  TransactionManager* txn_manager_ = nullptr;  // Not owned
 
   friend class boost::serialization::access;
   template <class Ar>
@@ -284,17 +288,31 @@ class Table
    * @brief Main ctor: injects a real or mock HeapFile
    */
   explicit Table(std::unique_ptr<HeapFileT> heap_file, uint8_t table_id = 0,
-                 std::string table_name = {}, Schema schema = {})
+                 std::string table_name = {}, Schema schema = {},
+                 LockManager* lock_mgr = nullptr,
+                 TransactionManager* txn_mgr = nullptr)
       : table_id_(table_id),
         table_name_(std::move(table_name)),
         schema_(std::move(schema)),
-        heap_file_(std::move(heap_file))
+        heap_file_(std::move(heap_file)),
+        lock_manager_(lock_mgr),
+        txn_manager_(txn_mgr)
   {
   }
 
   // Insert a row into the table
-  RID insert_row(const Row& row)
+  RID insert_row(TransactionID txn_id, const Row& row)
   {
+    if (!txn_manager_)
+    {
+      throw std::runtime_error("TransactionManager not available in Table");
+    }
+    Transaction* txn = txn_manager_->get_transaction(txn_id);
+    if (!txn)
+    {
+      throw std::runtime_error("Transaction not active");
+    }
+
     if (!heap_file_)
     {
       throw std::runtime_error("Table not properly initialized");
@@ -308,18 +326,39 @@ class Table
 
     // Convert row to bytes and store
     auto row_bytes = row.to_bytes();
-    return heap_file_->append(row_bytes);
+
+    // With S2PL, we must acquire an exclusive lock on the RID *before* making
+    // the modification. For an insert, the RID doesn't exist yet, so we don't
+    // lock here, but the append operation itself is atomic and will generate a
+    // new RID which the transaction implicitly holds an X-lock on.
+    RID new_rid = heap_file_->append(txn, row_bytes);
+    lock_manager_->acquire_exclusive(txn, new_rid);
+    return new_rid;
   }
 
   // Get a single row by its RID
-  bool get_row(RID rid, Row& out_row) const
+  bool get_row(TransactionID txn_id, RID rid, Row& out_row) const
   {
+    if (!txn_manager_)
+    {
+      throw std::runtime_error("TransactionManager not available in Table");
+    }
+    Transaction* txn = txn_manager_->get_transaction(txn_id);
+    if (!txn)
+    {
+      throw std::runtime_error("Transaction not active");
+    }
+
     if (!heap_file_)
     {
       throw std::runtime_error("Table not properly initialized");
     }
+
+    // Acquire lock before reading
+    lock_manager_->acquire_shared(txn, rid);
+
     std::vector<std::byte> row_bytes;
-    if (!heap_file_->get(rid, row_bytes))
+    if (!heap_file_->get(txn, rid, row_bytes))
     {
       return false;
     }
@@ -363,6 +402,8 @@ class Catalog
   // These are not persisted; they are set at runtime by a DB engine object.
   BufferPool* buffer_pool_ = nullptr;
   WAL_mgr* wal_mgr_ = nullptr;
+  LockManager* lock_manager_ = nullptr;
+  TransactionManager* txn_manager_ = nullptr;
 
   friend class boost::serialization::access;
   template <class Ar>
@@ -374,10 +415,15 @@ class Catalog
  public:
   Catalog() = default;
 
-  void set_managers(BufferPool* bp, WAL_mgr* wm)
+  void set_storage_managers(BufferPool* bp, WAL_mgr* wm)
   {
     buffer_pool_ = bp;
     wal_mgr_ = wm;
+  }
+  void set_transaction_managers(LockManager* lm, TransactionManager* tm)
+  {
+    lock_manager_ = lm;
+    txn_manager_ = tm;
   }
 
   // Create a new table

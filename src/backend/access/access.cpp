@@ -79,6 +79,8 @@ void Catalog::create_table(uint8_t table_id, const std::string& table_name,
 
   assert(buffer_pool_ && "BufferPool not set in Catalog");
   assert(wal_mgr_ && "WAL_mgr not set in Catalog");
+  assert(lock_manager_ && "LockManager not set in Catalog");
+  assert(txn_manager_ && "TransactionManager not set in Catalog");
 
   PageID first_page_id = buffer_pool_->allocate_page();
   m_schemas_.emplace(table_id, TableMetadata{schema, first_page_id, table_name,
@@ -86,8 +88,9 @@ void Catalog::create_table(uint8_t table_id, const std::string& table_name,
 
   auto heap_file = std::make_unique<HeapFile>(buffer_pool_, wal_mgr_,
                                               first_page_id, max_tuple_size);
-  tables_[table_id] = std::make_unique<Table<>>(std::move(heap_file), table_id,
-                                                table_name, schema);
+  tables_[table_id] =
+      std::make_unique<Table<>>(std::move(heap_file), table_id, table_name,
+                                schema, lock_manager_, txn_manager_);
 }
 
 Table<>* Catalog::get_table(uint8_t table_id)
@@ -104,12 +107,15 @@ Table<>* Catalog::get_table(uint8_t table_id)
   {
     assert(buffer_pool_ && "BufferPool not set in Catalog");
     assert(wal_mgr_ && "WAL_mgr not set in Catalog");
+    assert(lock_manager_ && "LockManager not set in Catalog");
+    assert(txn_manager_ && "TransactionManager not set in Catalog");
 
     const auto& meta = meta_it->second;
     auto heap_file = std::make_unique<HeapFile>(
         buffer_pool_, wal_mgr_, meta.first_page_id, meta.max_tuple_size);
     tables_[table_id] = std::make_unique<Table<>>(
-        std::move(heap_file), table_id, meta.table_name, meta.schema);
+        std::move(heap_file), table_id, meta.table_name, meta.schema,
+        lock_manager_, txn_manager_);
     return tables_[table_id].get();
   }
 
@@ -153,6 +159,9 @@ void Catalog::reinit_tables()
 {
   assert(buffer_pool_ && "BufferPool not set in Catalog to re-init tables");
   assert(wal_mgr_ && "WAL_mgr not set in Catalog to re-init tables");
+  assert(lock_manager_ && "LockManager not set in Catalog to re-init tables");
+  assert(txn_manager_ &&
+         "TransactionManager not set in Catalog to re-init tables");
 
   tables_.clear();  // Clear old table objects if any
   for (const auto& [table_id, meta] : m_schemas_)
@@ -160,6 +169,7 @@ void Catalog::reinit_tables()
     auto heap_file = std::make_unique<HeapFile>(
         buffer_pool_, wal_mgr_, meta.first_page_id, meta.max_tuple_size);
     tables_[table_id] = std::make_unique<Table<>>(
-        std::move(heap_file), table_id, meta.table_name, meta.schema);
+        std::move(heap_file), table_id, meta.table_name, meta.schema,
+        lock_manager_, txn_manager_);
   }
 }
