@@ -1,61 +1,66 @@
 #include <gtest/gtest.h>
+
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <vector>
+
 #include "access.h"
 
-struct MockHeapFile {
-    std::vector<std::vector<std::byte>> rows;
-    RID append(const std::vector<std::byte>& bytes) {
-        rows.push_back(bytes);
-        return RID{rows.size() - 1}; // Or whatever your RID is
-    }
-    std::vector<std::vector<std::byte>> full_scan() const {
-        return rows;
-    }
+// Note: This MockHeapFile matches the structure of the one in test_access.cpp.
+// In a larger project, this might be shared in a test utility header.
+class MockHeapFile
+{
+ public:
+  std::vector<std::vector<std::byte>> rows;
+  size_t max_tuple_size = 256;
+
+  // Mock constructor to match the real HeapFile signature
+  MockHeapFile(BufferPool*, WAL_mgr*, PageID, size_t max_size)
+      : max_tuple_size(max_size)
+  {
+  }
+
+  RID append(std::span<const std::byte> t)
+  {
+    rows.emplace_back(t.begin(), t.end());
+    return {static_cast<PageID>(rows.size() - 1), 0};
+  }
+
+  std::vector<std::vector<std::byte>> full_scan() const { return rows; }
 };
 
+class AccessTest : public testing::Test
+{
+ protected:
+  void SetUp() override
+  {
+    test_dir = std::filesystem::temp_directory_path() / "smoldb_test_access";
+    std::filesystem::create_directories(test_dir);
+    // The mock heap doesn't need real managers, so passing nullptr is fine for
+    // this test.
+    heap_ = std::make_unique<MockHeapFile>(nullptr, nullptr, 0, 256);
+  }
 
-class AccessTest : public testing::Test {
-protected:
-    void SetUp() override {
-        test_dir = std::filesystem::temp_directory_path() / "smoldb_test";
-        std::filesystem::create_directories(test_dir);
-        heap_ = std::make_unique<MockHeapFile>();
-    }
+  void TearDown() override { std::filesystem::remove_all(test_dir); }
 
-    void TearDown() override {
-        std::filesystem::remove_all(test_dir);
-    }
-
-    std::filesystem::path test_dir;
-    std::unique_ptr<MockHeapFile> heap_;
+  std::filesystem::path test_dir;
+  std::unique_ptr<MockHeapFile> heap_;
 };
 
-TEST_F(AccessTest, BasicSchemaAndCatalog) {
-    // Test original functionality
-    Catalog cat(test_dir);
-    Schema sch;
-    Column c;
-    c.id = 42;
-    c.name = "foo";
-    c.type = Col_type::INT;
-    c.nullable = true;
-    c.default_bytes = { std::byte{0x10}, std::byte{0x20} };
-    sch.push_back(c);
-    cat.register_schema(1, std::move(sch));
+TEST_F(AccessTest, BasicTableInsert)
+{
+  Schema schema;
+  schema.push_back({0, "id", Col_type::INT, false, {}});
 
-    auto p1 = test_dir / "catalog1.bin";
-    auto p2 = test_dir / "catalog2.bin";
+  Table<MockHeapFile> table(std::move(heap_), 1, "test_table", schema);
 
-    cat.dump(p1);
-    Catalog loaded(test_dir);
-    loaded.load(p1);
-    loaded.dump(p2);
+  Row row(schema);
+  row.set_value("id", 123);
 
-    std::ifstream f1(p1, std::ios::binary), f2(p2, std::ios::binary);
-    std::vector<char> b1{ std::istreambuf_iterator(f1), {} },
-                      b2{ std::istreambuf_iterator(f2), {} };
-    ASSERT_EQ(b1, b2);
+  table.insert_row(row);
+
+  auto rows = table.scan_all();
+  ASSERT_EQ(rows.size(), 1);
+  EXPECT_EQ(boost::get<int32_t>(rows[0].get_value("id")), 123);
 }
