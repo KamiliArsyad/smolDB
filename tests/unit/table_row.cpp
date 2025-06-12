@@ -27,7 +27,7 @@ class MockHeapFile
     return {static_cast<PageID>(rows.size() - 1), 0};
   }
 
-  std::vector<std::vector<std::byte>> full_scan() const { return rows; }
+  void full_scan(std::vector<std::vector<std::byte>>& out) const { out = rows; }
 };
 
 class AccessTest : public testing::Test

@@ -335,7 +335,8 @@ class Table
       throw std::runtime_error("Table not properly initialized");
     }
 
-    auto byte_rows = heap_file_->full_scan();
+    std::vector<std::vector<std::byte>> byte_rows;
+    heap_file_->full_scan(byte_rows);
     std::vector<Row> rows;
     rows.reserve(byte_rows.size());
 
