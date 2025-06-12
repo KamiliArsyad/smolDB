@@ -1,6 +1,7 @@
 #ifndef LOCK_MANAGER_H
 #define LOCK_MANAGER_H
 
+#include <chrono>
 #include <condition_variable>
 #include <list>
 #include <mutex>
@@ -29,7 +30,7 @@ class LockManager
    * Blocks if the lock cannot be granted immediately.
    * @param txn The transaction requesting the lock.
    * @param rid The Row ID to lock.
-   * @return true if lock was acquired, false on deadlock (not implemented yet).
+   * @return true if lock was acquired, false on timeout (deadlock).
    */
   bool acquire_shared(Transaction* txn, const RID& rid);
 
@@ -38,7 +39,7 @@ class LockManager
    * Blocks if the lock cannot be granted immediately.
    * @param txn The transaction requesting the lock.
    * @param rid The Row ID to lock.
-   * @return true if lock was acquired, false on deadlock (not implemented yet).
+   * @return true if lock was acquired, false on timeout (deadlock).
    */
   bool acquire_exclusive(Transaction* txn, const RID& rid);
 
@@ -50,21 +51,9 @@ class LockManager
   void release_all(Transaction* txn);
 
  private:
-  struct LockRequest
-  {
-    TransactionID txn_id;
-    LockMode mode;
-    bool granted;
-  };
-
-  struct LockRequestQueue
-  {
-    std::list<LockRequest> requests;
-    std::condition_variable cv;
-    LockMode mode = LockMode::SHARED;  // Can be interpreted as "no lock" if
-                                       // sharing_count is 0
-    int sharing_count = 0;
-  };
+  // Forward-declare inner structs
+  struct LockRequest;
+  struct LockRequestQueue;
 
   // A single shard of the lock map
   struct Shard
@@ -86,8 +75,26 @@ class LockManager
     }
   };
 
+  struct LockRequest
+  {
+    TransactionID txn_id;
+    LockMode mode;
+    bool granted = false;
+  };
+
+  struct LockRequestQueue
+  {
+    std::list<LockRequest> requests;
+    std::condition_variable cv;
+    // The number of transactions currently holding a shared lock.
+    int sharing_count = 0;
+    // Is an exclusive lock held?
+    bool is_exclusive = false;
+  };
+
   std::vector<Shard> shards_;
   const size_t shard_count_;
+  const std::chrono::milliseconds lock_timeout_;
 
   // Get the shard for a given RID
   Shard& get_shard(const RID& rid);

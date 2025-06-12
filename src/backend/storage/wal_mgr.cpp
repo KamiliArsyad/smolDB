@@ -18,6 +18,41 @@ LSN WAL_mgr::append_record(LogRecordHeader& hdr, const void* payload)
   return hdr.lsn;
 }
 
+void WAL_mgr::read_all_records_for_txn(
+    uint64_t target_txn_id,
+    std::vector<std::pair<LogRecordHeader, std::vector<char>>>& out)
+{
+  out.clear();
+
+  // Ensure any buffered writes are on disk before reading
+  wal_stream_.flush();
+
+  std::ifstream in(path_, std::ios::binary);
+  if (!in.is_open())
+  {
+    // This can happen if no WAL records were ever written. It's not an error.
+    return;
+  }
+
+  while (in.peek() != EOF)
+  {
+    LogRecordHeader hdr;
+    in.read(reinterpret_cast<char*>(&hdr), sizeof(hdr));
+    if (in.gcount() != sizeof(hdr)) break;
+
+    uint32_t payload_len = hdr.lr_length - sizeof(LogRecordHeader);
+    std::vector<char> buf(payload_len);
+    in.read(buf.data(), payload_len);
+
+    if (hdr.txn_id == target_txn_id)
+    {
+      out.emplace_back(hdr, std::move(buf));
+    }
+  }
+
+  in.close();
+}
+
 void WAL_mgr::recover(BufferPool& bfr_manager, const std::filesystem::path& path)
 {
   std::ifstream in(path, std::ios::binary);

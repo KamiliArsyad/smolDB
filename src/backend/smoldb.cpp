@@ -23,7 +23,8 @@ SmolDB::SmolDB(const std::filesystem::path& db_directory,
   buffer_pool_ = std::make_unique<BufferPool>(buffer_pool_size, disk_mgr_.get(),
                                               wal_mgr_.get());
   lock_manager_ = std::make_unique<LockManager>();
-  txn_manager_ = std::make_unique<TransactionManager>(lock_manager_.get(), wal_mgr_.get());
+  txn_manager_ = std::make_unique<TransactionManager>(
+      lock_manager_.get(), wal_mgr_.get(), buffer_pool_.get());
   catalog_ = std::make_unique<Catalog>();
   catalog_->set_storage_managers(buffer_pool_.get(), wal_mgr_.get());
   catalog_->set_transaction_managers(lock_manager_.get(), txn_manager_.get());

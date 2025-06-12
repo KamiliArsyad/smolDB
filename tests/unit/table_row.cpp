@@ -49,8 +49,8 @@ class AccessTest : public testing::Test
     dummy_wal_path_ = test_dir / "dummy.wal";
     lock_mgr_ = std::make_unique<LockManager>();
     wal_mgr_ = std::make_unique<WAL_mgr>(dummy_wal_path_);
-    txn_mgr_ =
-        std::make_unique<TransactionManager>(lock_mgr_.get(), wal_mgr_.get());
+    txn_mgr_ = std::make_unique<TransactionManager>(lock_mgr_.get(),
+                                                    wal_mgr_.get(), nullptr);
   }
 
   void TearDown() override { std::filesystem::remove_all(test_dir); }

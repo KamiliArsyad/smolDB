@@ -59,7 +59,9 @@ TEST(TableTest, InsertScanSingleRow)
   auto dummy_wal_path = test_dir / "dummy.wal";
   auto lm = std::make_unique<LockManager>();
   auto wm = std::make_unique<WAL_mgr>(dummy_wal_path);
-  auto tm = std::make_unique<TransactionManager>(lm.get(), wm.get());
+  // TransactionManager now needs a BufferPool, but we can pass nullptr for this
+  // isolated test as abort() is not called.
+  auto tm = std::make_unique<TransactionManager>(lm.get(), wm.get(), nullptr);
 
   Table<MockHeapFile> table(std::move(mock_hf), 1, "test_table", schema,
                             lm.get(), tm.get());

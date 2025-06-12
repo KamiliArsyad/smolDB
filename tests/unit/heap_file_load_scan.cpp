@@ -30,8 +30,8 @@ class HeapFileTest : public ::testing::Test
     buffer_pool =
         std::make_unique<BufferPool>(10, disk_mgr.get(), wal_mgr.get());
     lock_mgr = std::make_unique<LockManager>();
-    txn_mgr =
-        std::make_unique<TransactionManager>(lock_mgr.get(), wal_mgr.get());
+    txn_mgr = std::make_unique<TransactionManager>(
+        lock_mgr.get(), wal_mgr.get(), buffer_pool.get());
   }
 
   void TearDown() override

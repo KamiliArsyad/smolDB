@@ -1,15 +1,23 @@
 #include "trx_mgr.h"
 
+#include <cstring>
+#include <fstream>
 #include <stdexcept>
+#include <vector>
+
+#include "../storage/bfrpl.h"
 
 TransactionManager::TransactionManager(LockManager* lock_manager,
-                                       WAL_mgr* wal_manager)
+                                       WAL_mgr* wal_manager,
+                                       BufferPool* buffer_pool)
     : lock_manager_(lock_manager),
       wal_manager_(wal_manager),
+      buffer_pool_(buffer_pool),
       next_txn_id_(1)  // Start with a valid transaction ID
 {
   assert(lock_manager_ != nullptr);
   assert(wal_manager_ != nullptr);
+  // assert(buffer_pool_ != nullptr); -- not necessary for isolated unit tests
 }
 
 TransactionID TransactionManager::begin()
@@ -76,11 +84,39 @@ void TransactionManager::abort(TransactionID txn_id)
   Transaction* txn = get_transaction(txn_id);
   if (!txn)
   {
-    // Aborting an already aborted/committed transaction is a no-op
-    return;
+    return;  // Already completed
   }
 
-  // TODO: Implement actual rollback logic (Undo phase)
+  // TODO: This is a highly inefficient way to read the WAL for rollback.
+  // A real system would use the prev_lsn chain and an LSN->offset map.
+  // For this breadth-first pass, we scan the whole log.
+  std::vector<std::pair<LogRecordHeader, std::vector<char>>> txn_log_records;
+  wal_manager_->read_all_records_for_txn(txn_id, txn_log_records);
+
+  // Apply before-images in reverse chronological order
+  for (auto it = txn_log_records.rbegin(); it != txn_log_records.rend(); ++it)
+  {
+    const auto& hdr = it->first;
+    const auto& payload_data = it->second;
+
+    if (hdr.type == UPDATE)
+    {
+      // inefficient but ok. bfrpl specifically only needed for this.
+      assert(buffer_pool_ != nullptr);
+      auto* upd =
+          reinterpret_cast<const UpdatePagePayload*>(payload_data.data());
+      PageGuard page = buffer_pool_->fetch_page(upd->page_id);
+
+      // Apply the before-image to undo the change
+      std::memcpy(page->data() + upd->offset, upd->bef(), upd->length);
+
+      // Note: We are not writing Compensation Log Records (CLRs) yet.
+      // This is a simplification.
+
+      page.mark_dirty();
+      // The guard's destructor will unpin the page.
+    }
+  }
 
   // Write ABORT record to WAL
   LogRecordHeader hdr{};

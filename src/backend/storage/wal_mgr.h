@@ -84,6 +84,9 @@ public:
 
   void recover(BufferPool &bfr_manager, const std::filesystem::path& path);
 
+  void read_all_records_for_txn(
+      uint64_t txn_id, std::vector<std::pair<LogRecordHeader, std::vector<char>>>& out);
+
   void flush_to_lsn(LSN target)
   {
     if (target > flushed_lsn_) wal_stream_.flush();

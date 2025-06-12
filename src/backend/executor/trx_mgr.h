@@ -6,6 +6,7 @@
 #include <mutex>
 #include <unordered_map>
 
+#include "../storage/bfrpl.h"
 #include "../storage/wal_mgr.h"
 #include "lock_mgr.h"
 #include "trx.h"
@@ -17,7 +18,8 @@
 class TransactionManager
 {
  public:
-  explicit TransactionManager(LockManager* lock_manager, WAL_mgr* wal_manager);
+  explicit TransactionManager(LockManager* lock_manager, WAL_mgr* wal_manager,
+                              BufferPool* buffer_pool);
 
   /**
    * @brief Begins a new transaction.
@@ -47,6 +49,7 @@ class TransactionManager
  private:
   LockManager* lock_manager_;
   WAL_mgr* wal_manager_;
+  BufferPool* buffer_pool_;
 
   std::atomic<TransactionID> next_txn_id_;
   std::mutex active_txns_mutex_;
