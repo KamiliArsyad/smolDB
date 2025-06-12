@@ -29,6 +29,9 @@ void Disk_mgr::read_page(PageID page_id, Page& page) {
     // zero-fill the rest
     std::memset(reinterpret_cast<char*>(&page) + got, 0, PAGE_SIZE - got);
   }
+
+  // Clear eofbit/failbit after a partial read, so the stream is usable again.
+  file_.clear();
 }
 
 void Disk_mgr::write_page(PageID page_id, const Page& page) {
