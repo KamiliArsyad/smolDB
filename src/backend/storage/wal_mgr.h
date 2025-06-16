@@ -103,8 +103,10 @@ class WAL_mgr
       uint64_t txn_id,
       std::vector<std::pair<LogRecordHeader, std::vector<char>>>& out);
 
+  // This method may be called externally and needs a lock
   void flush_to_lsn(LSN target)
   {
+    std::scoped_lock lock(general_mtx_);
     if (target > flushed_lsn_) wal_stream_.flush();
   }
 
@@ -116,6 +118,8 @@ class WAL_mgr
   std::atomic<LSN> next_lsn_ = 1;
   std::atomic<LSN> flushed_lsn_ = 0;
 
+  // Mtx to protect operations that don't go through the writer thread queue.
+  std::mutex general_mtx_;
   std::mutex mtx_;
   std::condition_variable cv_;
   std::list<std::unique_ptr<LogRecordBatch>> write_queue_;

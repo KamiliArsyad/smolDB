@@ -1,8 +1,10 @@
 #include "dsk_mgr.h"
 
 #include <cstring>
+#include <mutex>
 
 void Disk_mgr::ensure_open() {
+  // This is an internal helper, assumes caller holds the lock.
   assert(path_ != "");
   if (!file_.is_open()) {
     file_.open(path_, std::ios::in | std::ios::out | std::ios::binary);
@@ -13,6 +15,7 @@ void Disk_mgr::ensure_open() {
 }
 
 void Disk_mgr::read_page(PageID page_id, Page& page) {
+  std::scoped_lock lock(file_mutex_);
   ensure_open();
   auto off = offset_for(page_id);
   file_.seekg(off, std::ios::beg);
@@ -35,6 +38,7 @@ void Disk_mgr::read_page(PageID page_id, Page& page) {
 }
 
 void Disk_mgr::write_page(PageID page_id, const Page& page) {
+  std::scoped_lock lock(file_mutex_);
   ensure_open();
   auto off = offset_for(page_id);
   file_.seekp(off, std::ios::beg);

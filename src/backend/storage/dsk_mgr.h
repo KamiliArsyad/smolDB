@@ -55,6 +55,7 @@ public:
 private:
   std::filesystem::path path_;
   std::fstream file_;
+  std::mutex file_mutex_;
   std::atomic<PageID> next_page_id_;
 
   // Compute the byte offset for the start of page `page_id`.

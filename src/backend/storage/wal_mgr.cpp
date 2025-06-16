@@ -92,6 +92,7 @@ void WAL_mgr::read_all_records_for_txn(
     uint64_t target_txn_id,
     std::vector<std::pair<LogRecordHeader, std::vector<char>>>& out)
 {
+  std::scoped_lock lock(general_mtx_);
   out.clear();
 
   // Ensure any buffered writes are on disk before reading
