@@ -14,6 +14,8 @@
 
 class Transaction;
 
+constexpr int BUFFER_SIZE_FOR_TEST = 12;
+
 class SmolDB
 {
  public:

@@ -11,7 +11,7 @@ class TransactionTest : public ::testing::Test
     std::filesystem::remove_all(test_dir);
     std::filesystem::create_directories(test_dir);
 
-    db = std::make_unique<SmolDB>(test_dir, 10);
+    db = std::make_unique<SmolDB>(test_dir, BUFFER_SIZE_FOR_TEST);
     db->startup();
 
     // Create a simple table for testing

@@ -9,6 +9,7 @@
 #include "executor/lock_mgr.h"
 #include "executor/trx_mgr.h"
 #include "heapfile.h"
+#include "smoldb.h"
 #include "wal_mgr.h"
 
 class HeapFileTest : public ::testing::Test
@@ -28,7 +29,7 @@ class HeapFileTest : public ::testing::Test
     disk_mgr = std::make_unique<Disk_mgr>(db_path);
     wal_mgr = std::make_unique<WAL_mgr>(wal_path);
     buffer_pool =
-        std::make_unique<BufferPool>(10, disk_mgr.get(), wal_mgr.get());
+        std::make_unique<BufferPool>(BUFFER_SIZE_FOR_TEST, disk_mgr.get(), wal_mgr.get());
     lock_mgr = std::make_unique<LockManager>();
     txn_mgr = std::make_unique<TransactionManager>(
         lock_mgr.get(), wal_mgr.get(), buffer_pool.get());

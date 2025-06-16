@@ -1,8 +1,10 @@
-#include <cstring>
 #include <gtest/gtest.h>
+
+#include <cstring>
 
 #include "bfrpl.h"
 #include "dsk_mgr.h"
+#include "smoldb.h"
 #include "wal_mgr.h"
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -71,7 +73,7 @@ TEST(WAL_mgr, AppendRecover)
   // 2. Simulate restart: open _new_ WAL_mgr + disk + buffer-pool and recover.
   WAL_mgr wal_replayer(wal_path);               // read-only role
   Disk_mgr disk(db_path);
-  BufferPool pool(/*capacity=*/4, &disk, &wal_replayer);
+  BufferPool pool(BUFFER_SIZE_FOR_TEST, &disk, &wal_replayer);
 
   ASSERT_NO_THROW(wal_replayer.recover(pool, wal_path));
 
@@ -119,7 +121,7 @@ TEST(WAL_mgr, LastWriteWins)
   wal.flush_to_lsn(h2.lsn);
 
   Disk_mgr disk(tmpfile("wal_last_write_wins.db"));
-  BufferPool pool(2, &disk, &wal);
+  BufferPool pool(BUFFER_SIZE_FOR_TEST, &disk, &wal);
 
   wal.recover(pool, wal_path);
   PageGuard g = pool.fetch_page(kPid);

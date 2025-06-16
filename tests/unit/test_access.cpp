@@ -92,7 +92,7 @@ class CatalogTest : public ::testing::Test
     std::filesystem::remove_all(test_dir);
     std::filesystem::create_directories(test_dir);
 
-    db = std::make_unique<SmolDB>(test_dir, 10);
+    db = std::make_unique<SmolDB>(test_dir, 12);
     db->startup();
   }
 
@@ -147,7 +147,7 @@ TEST_F(CatalogTest, PersistAndReload)
   db->shutdown();
 
   // --- Simulate restart ---
-  auto new_db = std::make_unique<SmolDB>(test_dir, 10);
+  auto new_db = std::make_unique<SmolDB>(test_dir, 12);
   new_db->startup();
 
   auto* reloaded_table = new_db->get_table(22);
