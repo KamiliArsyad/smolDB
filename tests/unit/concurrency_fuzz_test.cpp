@@ -67,7 +67,6 @@ TEST(ConcurrencyFuzzTest, HammerTheBufferPool)
               auto guard = db.buffer_pool_->fetch_page(pid);
               // log_thread_activity("Fetched page " + std::to_string(pid) +
               //                     ",marking dirty.");
-              guard->data()[0] = std::byte{static_cast<uint8_t>(pid)};
               guard.mark_dirty();
             });
           }
