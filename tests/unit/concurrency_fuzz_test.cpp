@@ -36,7 +36,7 @@ void log_thread_activity(const std::string& msg)
 TEST(ConcurrencyFuzzTest, HammerTheBufferPool)
 {
   const size_t num_threads = 3 * std::thread::hardware_concurrency();
-  const int num_pages_to_hammer = 100;
+  const int num_pages_to_hammer = 1000;
   const std::chrono::seconds test_duration = std::chrono::seconds(3);
 
   auto test_dir = std::filesystem::temp_directory_path() / "fuzz_test";

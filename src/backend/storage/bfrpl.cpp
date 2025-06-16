@@ -36,7 +36,7 @@ PageGuard BufferPool::fetch_page(PageID pid)
   {
     auto frame_it = cache_it->second;
     shard.lru_list_.splice(shard.lru_list_.begin(), shard.lru_list_, frame_it);
-    return PageGuard(this, &(*frame_it));
+    return PageGuard(this, &(*frame_it), &shard);
   }
 
   if (shard.lru_list_.size() >= shard.capacity_)
@@ -83,9 +83,37 @@ PageGuard BufferPool::fetch_page(PageID pid)
   new_frame.is_dirty.store(false, std::memory_order_relaxed);
   shard.cache_[pid] = shard.lru_list_.begin();
 
-  return PageGuard(this, &new_frame);
+  return PageGuard(this, &new_frame, &shard);
 }
 
+/**
+ * This is the new, robust unpin implementation. By acquiring the shard lock,
+ * it can safely notify a waiting thread, preventing livelock.
+ */
+void BufferPool::unpin_page_and_notify(Frame* frame, bool mark_dirty,
+                                       BufferPoolShard* shard)
+{
+  // Acquire the lock for the specific shard this frame belongs to.
+  std::scoped_lock lock(shard->mutex_);
+
+  if (mark_dirty)
+  {
+    frame->is_dirty.store(true, std::memory_order_release);
+  }
+
+  // Decrement the pin count.
+  frame->pin_count.fetch_sub(1, std::memory_order_acq_rel);
+
+  // If this unpin made a page available for eviction (i.e., pin count is now
+  // 0), notify one of the threads that might be waiting for a free page.
+  if (frame->pin_count.load() == 0)
+  {
+    shard->cv_.notify_one();
+  }
+}
+
+// No longer used
+/*
 void BufferPool::unpin_page(Frame* frame, bool mark_dirty)
 {
   if (mark_dirty)
@@ -94,6 +122,7 @@ void BufferPool::unpin_page(Frame* frame, bool mark_dirty)
   }
   frame->pin_count.fetch_sub(1, std::memory_order_acq_rel);
 }
+*/
 
 // This is now a private helper. Its logic is the same, but its contract
 // (caller holds the lock) is enforced by its private status.

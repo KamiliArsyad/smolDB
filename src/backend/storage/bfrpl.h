@@ -118,6 +118,17 @@ class BufferPool
    */
   PageID allocate_page();
 
+  /**
+   * @brief Unpins a page, making it eligible for eviction and notifying
+   * waiters. This is the new, thread-safe unpin method that solves the livelock
+   * problem.
+   * @param frame A pointer to the frame to unpin.
+   * @param mark_dirty True if the page was modified.
+   * @param shard A pointer to the shard the frame belongs to.
+   */
+  void unpin_page_and_notify(Frame* frame, bool mark_dirty,
+                             BufferPoolShard* shard);
+
  private:
   friend class BufferPoolTest;  // Allow test to access internals
   friend class ConcurrencyTest;
@@ -157,7 +168,13 @@ class PageGuard
 {
  public:
   PageGuard() noexcept = default;
-  PageGuard(BufferPool* p, Frame* f) noexcept : pool(p), frame(f)
+
+  /**
+   * @brief PageGuard also holds a pointer to the shard for efficient
+   * notification on unpin.
+   */
+  PageGuard(BufferPool* p, Frame* f, BufferPoolShard* s) noexcept
+      : pool(p), frame(f), shard(s)
   {
     if (frame)
     {
@@ -196,22 +213,26 @@ class PageGuard
  private:
   BufferPool* pool{nullptr};
   Frame* frame{nullptr};
-  bool is_dirty_on_unpin_{false};
+  BufferPoolShard* shard{nullptr};
 
   void release() noexcept
   {
     if (frame && pool)
     {
-      pool->unpin_page(frame, frame->is_dirty.load(std::memory_order_relaxed));
+      // Call the notification-aware unpin method.
+      pool->unpin_page_and_notify(
+          frame, frame->is_dirty.load(std::memory_order_relaxed), shard);
     }
     pool = nullptr;
     frame = nullptr;
+    shard = nullptr;
   }
 
   void swap(PageGuard& other) noexcept
   {
     std::swap(pool, other.pool);
     std::swap(frame, other.frame);
+    std::swap(shard, other.shard);
   }
 };
 
