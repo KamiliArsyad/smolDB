@@ -1,6 +1,7 @@
 #ifndef BUFFERPOOL_H
 #define BUFFERPOOL_H
 
+#include <condition_variable>
 #include <list>
 #include <mutex>
 #include <thread>
@@ -18,19 +19,24 @@ class BufferPool;
 
 /**
  * @struct BufferPoolShard
- * @brief A self-contained shard of the Buffer Pool.
+ * @brief A self-contained, non-movable, non-copyable shard of the Buffer Pool.
  *
  * Each shard manages its own subset of frames, its own cache, and its own
- * LRU list, all protected by a dedicated mutex. This is the core of our
- * strategy to reduce lock contention and enable high concurrency. By
- * partitioning pages across multiple shards, threads operating on different
- * shards can proceed in parallel without blocking one another.
+ * LRU list, all protected by a dedicated mutex. Because this struct contains
+ * a std::mutex and std::condition_variable, it is fundamentally non-movable
+ * and non-copyable. This contract is enforced by deleting the copy/move
+ * constructors and assignment operators, preventing dangerous operations like
+ * vector reallocation from causing race conditions. Shards must be constructed
+ * in-place (e.g., with vector::emplace_back).
  */
 struct BufferPoolShard
 {
   /** A dedicated mutex protecting this shard's metadata (cache and lru_list).
    */
   std::mutex mutex_;
+  /** A condition variable for threads to wait on when no frames can be evicted.
+   */
+  std::condition_variable cv_;
   /** Maps a PageID to an iterator in this shard's LRU list. */
   std::unordered_map<PageID, std::list<Frame>::iterator> cache_;
   /** The list of frames managed by this shard, ordered by recent use. */
@@ -44,27 +50,13 @@ struct BufferPoolShard
    */
   explicit BufferPoolShard(size_t capacity) : capacity_(capacity) {}
 
-  // Non-copyable and non-assignable due to the std::mutex member.
+  // This class is non-copyable and non-movable because it owns a mutex.
+  // Deleting these operations prevents accidental misuse that could lead to
+  // deadlocks or race conditions.
   BufferPoolShard(const BufferPoolShard&) = delete;
   BufferPoolShard& operator=(const BufferPoolShard&) = delete;
-
-  // Movable to allow placement in std::vector.
-  BufferPoolShard(BufferPoolShard&& other) noexcept
-      : cache_(std::move(other.cache_)),
-        lru_list_(std::move(other.lru_list_)),
-        capacity_(other.capacity_)
-  {
-  }
-  BufferPoolShard& operator=(BufferPoolShard&& other) noexcept
-  {
-    if (this != &other)
-    {
-      cache_ = std::move(other.cache_);
-      lru_list_ = std::move(other.lru_list_);
-      // capacity_ is const and should not be moved.
-    }
-    return *this;
-  }
+  BufferPoolShard(BufferPoolShard&&) = delete;
+  BufferPoolShard& operator=(BufferPoolShard&&) = delete;
 };
 
 /**
@@ -131,6 +123,14 @@ class BufferPool
   friend class ConcurrencyTest;
 
   /**
+   * @brief Internal flush helper. Requires the shard's lock to be held by the
+   * caller. This replaces the old public flush_page, as flushing now requires
+   * shard context.
+   */
+  void flush_page_unlocked(std::list<Frame>::iterator frame_iter,
+                           BufferPoolShard& shard);
+
+  /**
    * @brief Determines which shard a given PageID belongs to.
    * This is the core routing function for the sharded design.
    * @param pid The PageID to route.
@@ -138,7 +138,7 @@ class BufferPool
    */
   BufferPoolShard& get_shard(PageID pid);
 
-  std::vector<BufferPoolShard> shards_;
+  std::vector<std::unique_ptr<BufferPoolShard>> shards_;
   const size_t shard_count_;
 
   Disk_mgr* disk_mgr_;
