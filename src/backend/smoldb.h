@@ -14,7 +14,7 @@
 
 class Transaction;
 
-constexpr int BUFFER_SIZE_FOR_TEST = 12;
+const int BUFFER_SIZE_FOR_TEST = std::thread::hardware_concurrency();
 
 class SmolDB
 {
