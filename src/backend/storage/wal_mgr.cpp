@@ -43,6 +43,18 @@ void WAL_mgr::writer_thread_main()
 
     if (!local_queue.empty())
     {
+      /**
+       * We can be assured that this won't cause a deadlock as the only other
+       * possible holder of `general_mtx_` is `read_all_records_for_txn` which
+       * does not wait for any other mutex.
+       */
+      std::scoped_lock lock(general_mtx_);  // Lock before writing to the file
+      for (const auto& batch : local_queue)
+      {
+        wal_stream_.write(batch->data.data(), batch->data.size());
+      }
+      wal_stream_.flush();
+
       for (const auto& batch : local_queue)
       {
         wal_stream_.write(batch->data.data(), batch->data.size());
