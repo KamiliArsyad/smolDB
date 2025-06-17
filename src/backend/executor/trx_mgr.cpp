@@ -108,7 +108,7 @@ void TransactionManager::abort(TransactionID txn_id)
       PageGuard page = buffer_pool_->fetch_page(upd->page_id);
 
       // Apply the before-image to undo the change
-      std::memcpy(page->data() + upd->offset, upd->bef(), upd->length);
+      std::memcpy(page.write()->data() + upd->offset, upd->bef(), upd->length);
 
       // Note: We are not writing Compensation Log Records (CLRs) yet.
       // This is a simplification.

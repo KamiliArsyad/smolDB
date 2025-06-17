@@ -1,9 +1,12 @@
+// ===== ../smolDB/src/backend/storage/bfrpl.h =====
+
 #ifndef BUFFERPOOL_H
 #define BUFFERPOOL_H
 
 #include <condition_variable>
 #include <list>
 #include <mutex>
+#include <shared_mutex>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -156,6 +159,9 @@ class BufferPool
   WAL_mgr* wal_mgr_;
 };
 
+class PageReader;
+class PageWriter;
+
 /**
  * @class PageGuard
  * @brief An RAII-style guard that manages the pinning and unpinning of a page.
@@ -163,6 +169,8 @@ class BufferPool
  * When a PageGuard is created, it pins the page in the buffer pool.
  * When it goes out of scope, its destructor automatically unpins the page,
  * making it eligible for eviction again. This prevents memory safety issues.
+ * It provides access to the page's data via PageReader/PageWriter objects
+ * that enforce physical page latching.
  */
 class PageGuard
 {
@@ -195,8 +203,9 @@ class PageGuard
 
   ~PageGuard() noexcept { release(); }
 
-  Page* operator->() const noexcept { return &frame->page; }
-  Page& operator*() const noexcept { return frame->page; }
+  // DELETED! Direct access is unsafe. Use read() or write().
+  // Page* operator->() const noexcept { return &frame->page; }
+  // Page& operator*() const noexcept { return frame->page; }
 
   void mark_dirty() const noexcept
   {
@@ -209,6 +218,11 @@ class PageGuard
   // Deleted copy constructor and assignment to prevent accidental copies.
   PageGuard(const PageGuard&) = delete;
   PageGuard& operator=(const PageGuard&) = delete;
+
+  // Grant read-only, latched access to the page.
+  PageReader read() const;
+  // Grant write, latched access to the page.
+  PageWriter write();
 
  private:
   BufferPool* pool{nullptr};
@@ -234,6 +248,49 @@ class PageGuard
     std::swap(frame, other.frame);
     std::swap(shard, other.shard);
   }
+};
+
+/**
+ * @class PageReader
+ * @brief An RAII accessor that provides read-only access to a page's data.
+ * It holds a shared lock on the physical page latch for its entire lifetime.
+ */
+class PageReader
+{
+ public:
+  const Page* operator->() const { return &frame_->page; }
+  const Page& operator*() const { return frame_->page; }
+
+ private:
+  friend class PageGuard;
+  PageReader(const Frame* frame, std::shared_lock<std::shared_mutex> lock)
+      : frame_(frame), lock_(std::move(lock))
+  {
+  }
+
+  const Frame* frame_;
+  std::shared_lock<std::shared_mutex> lock_;
+};
+
+/**
+ * @class PageWriter
+ * @brief An RAII accessor that provides write access to a page's data.
+ * It holds a unique lock on the physical page latch for its entire lifetime.
+ */
+class PageWriter
+{
+ public:
+  Page* operator->() { return &frame_->page; }
+  Page& operator*() { return frame_->page; }
+
+ private:
+  friend class PageGuard;
+  PageWriter(Frame* frame, std::unique_lock<std::shared_mutex> lock)
+      : frame_(frame), lock_(std::move(lock))
+  {
+  }
+  Frame* frame_;
+  std::unique_lock<std::shared_mutex> lock_;
 };
 
 #endif  // BUFFERPOOL_H

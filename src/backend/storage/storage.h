@@ -1,3 +1,5 @@
+// ===== ../smolDB/src/backend/storage/storage.h =====
+
 #ifndef STORAGE_H
 #define STORAGE_H
 #include <array>
@@ -8,6 +10,7 @@
 #include <fstream>
 #include <functional>
 #include <list>
+#include <shared_mutex>
 #include <span>
 #include <string>
 #include <unordered_map>
@@ -21,7 +24,7 @@ constexpr PageID INVALID_PAGE_ID = static_cast<PageID>(-1);
 struct PageHeader
 {
   PageID id;
-  LSN page_lsn; // Latest LSN of the log that modifies this page.
+  LSN page_lsn;  // Latest LSN of the log that modifies this page.
 };
 
 struct alignas(64) Page
@@ -32,7 +35,10 @@ struct alignas(64) Page
   [[nodiscard]]
   std::byte* data() noexcept { return raw_array.data(); }
   [[nodiscard]]
-  const std::byte* data() const noexcept { return raw_array.data(); }
+  const std::byte* data() const noexcept
+  {
+    return raw_array.data();
+  }
 };
 
 static_assert(sizeof(Page) == PAGE_SIZE, "Incorrect page size");
@@ -41,9 +47,12 @@ struct Frame
 {
   Page page;
   std::atomic<bool> is_dirty = false;
-  std::atomic<int>  pin_count = 0;
+  std::atomic<int> pin_count = 0;
+  // Physical latch protecting the raw data of the page.
+  // Must be acquired before any read/write to page.data().
+  std::shared_mutex page_latch;
 };
 
 using FrameIter = std::list<Frame>::iterator;
 
-#endif //STORAGE_H
+#endif  // STORAGE_H

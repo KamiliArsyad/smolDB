@@ -79,14 +79,15 @@ RID HeapFile::append(Transaction *txn, std::span<const std::byte> tuple_data)
   while (true)
   {
     PageGuard guard = buffer_pool_->fetch_page(current_pid);
+    auto page = guard.write();
 
     // Try to find an empty slot in the current page
     for (uint16_t slot_idx = 0; slot_idx < slots_per_page_; ++slot_idx)
     {
-      std::byte *slot_ptr = get_slot_ptr(*guard, slot_idx);
+      std::byte *slot_ptr = get_slot_ptr(*page, slot_idx);
       if (get_tuple_size(slot_ptr) == 0)
       {  // 0 size means empty slot
-        uint16_t offset = slot_ptr - guard->data();
+        uint16_t offset = slot_ptr - page->data();
 
         // The payload for the WAL is the entire slot (size + data)
         std::vector<std::byte> after_image(slot_size_, std::byte{0});
@@ -114,7 +115,7 @@ RID HeapFile::append(Transaction *txn, std::span<const std::byte> tuple_data)
         // Update the transaction's prev_lsn for chaining
         txn->set_prev_lsn(lsn);
 
-        guard->hdr.page_lsn = lsn;
+        page->hdr.page_lsn = lsn;
         set_tuple_size(slot_ptr, tuple_data.size());
         std::memcpy(get_tuple_data_ptr(slot_ptr), tuple_data.data(),
                     tuple_data.size());
@@ -137,12 +138,13 @@ bool HeapFile::get(Transaction *txn, RID rid,
   assert(txn != nullptr && "Cannot perform get without a transaction");
 
   PageGuard guard = buffer_pool_->fetch_page(rid.page_id);
+  auto page = guard.read();
   if (rid.slot >= slots_per_page_)
   {
     return false;
   }
 
-  const std::byte *slot_ptr = get_slot_ptr(*guard, rid.slot);
+  const std::byte *slot_ptr = get_slot_ptr(*page, rid.slot);
   uint32_t size = get_tuple_size(slot_ptr);
 
   if (size == 0)
@@ -167,13 +169,14 @@ bool HeapFile::update(Transaction *txn, RID rid,
   assert(txn != nullptr && "Cannot perform update without a transaction");
 
   PageGuard guard = buffer_pool_->fetch_page(rid.page_id);
+  auto page = guard.write();
   if (rid.slot >= slots_per_page_)
   {
     return false;
   }
 
-  std::byte *slot_ptr = get_slot_ptr(*guard, rid.slot);
-  uint16_t offset = slot_ptr - guard->data();
+  std::byte *slot_ptr = get_slot_ptr(*page, rid.slot);
+  uint16_t offset = slot_ptr - page->data();
   uint32_t current_size = get_tuple_size(slot_ptr);
   if (current_size == 0)
   {
@@ -211,7 +214,7 @@ bool HeapFile::update(Transaction *txn, RID rid,
   txn->set_prev_lsn(lsn);
 
   // Apply change to the page
-  guard->hdr.page_lsn = lsn;
+  page->hdr.page_lsn = lsn;
   std::memcpy(slot_ptr, after_image.data(), slot_size_);
   guard.mark_dirty();
 
@@ -223,13 +226,14 @@ bool HeapFile::delete_row(Transaction *txn, RID rid)
   assert(txn != nullptr && "Cannot perform delete without a transaction");
 
   PageGuard guard = buffer_pool_->fetch_page(rid.page_id);
+  auto page = guard.write();
   if (rid.slot >= slots_per_page_)
   {
     return false;
   }
 
-  std::byte *slot_ptr = get_slot_ptr(*guard, rid.slot);
-  uint16_t offset = slot_ptr - guard->data();
+  std::byte *slot_ptr = get_slot_ptr(*page, rid.slot);
+  uint16_t offset = slot_ptr - page->data();
   if (get_tuple_size(slot_ptr) == 0)
   {
     return false;  // Already deleted
@@ -262,7 +266,7 @@ bool HeapFile::delete_row(Transaction *txn, RID rid)
   txn->set_prev_lsn(lsn);
 
   // Apply change to the page (zero out the slot)
-  guard->hdr.page_lsn = lsn;
+  page->hdr.page_lsn = lsn;
   std::memset(slot_ptr, 0, slot_size_);
   guard.mark_dirty();
 
@@ -276,9 +280,10 @@ void HeapFile::full_scan(std::vector<std::vector<std::byte>> &out) const
   for (PageID pid = first_page_id_; pid <= current_last_page; ++pid)
   {
     PageGuard guard = buffer_pool_->fetch_page(pid);
+    auto page = guard.read();
     for (uint16_t slot_idx = 0; slot_idx < slots_per_page_; ++slot_idx)
     {
-      const std::byte *slot_ptr = get_slot_ptr(*guard, slot_idx);
+      const std::byte *slot_ptr = get_slot_ptr(*page, slot_idx);
       uint32_t size = get_tuple_size(slot_ptr);
       if (size > 0)
       {

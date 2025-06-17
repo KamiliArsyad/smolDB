@@ -77,7 +77,7 @@ TEST(WAL_mgr, AppendRecover)
 
   ASSERT_NO_THROW(wal_replayer.recover(pool, wal_path));
 
-  PageGuard g = pool.fetch_page(kPid);
+  auto g = pool.fetch_page(kPid).write();
   uint64_t read_back{};
   std::memcpy(&read_back, g->data() + kOff, sizeof(read_back));
   EXPECT_EQ(read_back, kVal);                   // after-image applied
@@ -124,7 +124,7 @@ TEST(WAL_mgr, LastWriteWins)
   BufferPool pool(BUFFER_SIZE_FOR_TEST, &disk, &wal);
 
   wal.recover(pool, wal_path);
-  PageGuard g = pool.fetch_page(kPid);
+  auto g = pool.fetch_page(kPid).write();
   uint32_t final;
   std::memcpy(&final, g->data() + kOff, sizeof(final));
   EXPECT_EQ(final, v2);          // newest value survives

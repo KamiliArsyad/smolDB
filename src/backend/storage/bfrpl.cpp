@@ -1,3 +1,5 @@
+// ===== ../smolDB/src/backend/storage/bfrpl.cpp =====
+
 #include "bfrpl.h"
 
 #include <cassert>
@@ -5,6 +7,19 @@
 
 #include "dsk_mgr.h"
 #include "wal_mgr.h"
+
+// --- PageGuard method implementations ---
+PageReader PageGuard::read() const
+{
+  return {frame, std::shared_lock(frame->page_latch)};
+}
+
+PageWriter PageGuard::write()
+{
+  mark_dirty();  // A write implies the page will become dirty.
+  return {frame, std::unique_lock(frame->page_latch)};
+}
+// --- End PageGuard implementations ---
 
 BufferPool::BufferPool(size_t capacity, Disk_mgr* d, WAL_mgr* w,
                        size_t shard_count)

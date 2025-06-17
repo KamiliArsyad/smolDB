@@ -167,13 +167,14 @@ void WAL_mgr::recover(BufferPool& bfr_manager,
         auto* upd = reinterpret_cast<const UpdatePagePayload*>(buf.data());
 
         // 1) pin the page
-        PageGuard page = bfr_manager.fetch_page(upd->page_id);
+        auto page = bfr_manager.fetch_page(upd->page_id);
+        auto pw = page.write();
 
         // 2) apply the "after" image
-        std::memcpy(page->data() + upd->offset, upd->aft(), upd->length);
+        std::memcpy(pw->data() + upd->offset, upd->aft(), upd->length);
 
         // 3) bump page’s LSN so we don't reapply older records
-        page->hdr.page_lsn = hdr.lsn;
+        pw->hdr.page_lsn = hdr.lsn;
 
         // 4) unpin as dirty so it'll be flushed later
         page.mark_dirty();
