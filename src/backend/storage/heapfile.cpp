@@ -1,3 +1,5 @@
+// ===== ../smolDB/src/backend/storage/heapfile.cpp =====
+
 #include "heapfile.h"
 
 #include <cassert>
@@ -11,8 +13,10 @@ constexpr size_t TUPLE_LENGTH_PREFIX_SIZE = sizeof(uint32_t);
 
 HeapFile::HeapFile(BufferPool *buffer_pool, WAL_mgr *wal_mgr,
                    PageID first_page_id, size_t max_tuple_size)
-    : buffer_pool_(buffer_pool), wal_mgr_(wal_mgr),
-      first_page_id_(first_page_id), last_page_id_(first_page_id),
+    : buffer_pool_(buffer_pool),
+      wal_mgr_(wal_mgr),
+      first_page_id_(first_page_id),
+      last_page_id_(first_page_id),
       max_tuple_size_(max_tuple_size)
 {
   assert(buffer_pool_ != nullptr && "BufferPool cannot be null");
@@ -62,7 +66,7 @@ std::byte *HeapFile::get_tuple_data_ptr(std::byte *slot_ptr)
   return slot_ptr + TUPLE_LENGTH_PREFIX_SIZE;
 }
 
-RID HeapFile::append(Transaction* txn, std::span<const std::byte> tuple_data)
+RID HeapFile::append(Transaction *txn, std::span<const std::byte> tuple_data)
 {
   if (tuple_data.size() > max_tuple_size_)
   {
@@ -81,7 +85,7 @@ RID HeapFile::append(Transaction* txn, std::span<const std::byte> tuple_data)
     {
       std::byte *slot_ptr = get_slot_ptr(*guard, slot_idx);
       if (get_tuple_size(slot_ptr) == 0)
-      { // 0 size means empty slot
+      {  // 0 size means empty slot
         uint16_t offset = slot_ptr - guard->data();
 
         // The payload for the WAL is the entire slot (size + data)
@@ -127,7 +131,8 @@ RID HeapFile::append(Transaction* txn, std::span<const std::byte> tuple_data)
   }
 }
 
-bool HeapFile::get(Transaction* txn, RID rid, std::vector<std::byte> &out_tuple) const
+bool HeapFile::get(Transaction *txn, RID rid,
+                   std::vector<std::byte> &out_tuple) const
 {
   assert(txn != nullptr && "Cannot perform get without a transaction");
 
@@ -148,6 +153,118 @@ bool HeapFile::get(Transaction* txn, RID rid, std::vector<std::byte> &out_tuple)
   out_tuple.resize(size);
   const std::byte *tuple_data_ptr = get_tuple_data_ptr(slot_ptr);
   std::memcpy(out_tuple.data(), tuple_data_ptr, size);
+
+  return true;
+}
+
+bool HeapFile::update(Transaction *txn, RID rid,
+                      std::span<const std::byte> new_tuple_data)
+{
+  if (new_tuple_data.size() > max_tuple_size_)
+  {
+    throw std::invalid_argument("New tuple is larger than max_tuple_size");
+  }
+  assert(txn != nullptr && "Cannot perform update without a transaction");
+
+  PageGuard guard = buffer_pool_->fetch_page(rid.page_id);
+  if (rid.slot >= slots_per_page_)
+  {
+    return false;
+  }
+
+  std::byte *slot_ptr = get_slot_ptr(*guard, rid.slot);
+  uint16_t offset = slot_ptr - guard->data();
+  uint32_t current_size = get_tuple_size(slot_ptr);
+  if (current_size == 0)
+  {
+    return false;  // Cannot update a deleted/non-existent tuple
+  }
+
+  // Create before-image from current slot content
+  std::vector<std::byte> before_image(slot_size_);
+  std::memcpy(before_image.data(), slot_ptr, slot_size_);
+
+  // Create after-image from new tuple data
+  std::vector<std::byte> after_image(slot_size_, std::byte{0});
+  uint32_t new_size = new_tuple_data.size();
+  set_tuple_size(after_image.data(), new_size);
+  std::memcpy(get_tuple_data_ptr(after_image.data()), new_tuple_data.data(),
+              new_size);
+
+  // Create and write the WAL record
+  auto *payload = UpdatePagePayload::create(rid.page_id, offset, slot_size_);
+  std::memcpy(const_cast<std::byte *>(payload->bef()), before_image.data(),
+              slot_size_);
+  std::memcpy(const_cast<std::byte *>(payload->aft()), after_image.data(),
+              slot_size_);
+
+  LogRecordHeader hdr{};
+  hdr.type = UPDATE;
+  hdr.txn_id = txn->get_id();
+  hdr.lr_length =
+      sizeof(LogRecordHeader) + sizeof(UpdatePagePayload) + 2 * slot_size_;
+  hdr.prev_lsn = txn->get_prev_lsn();
+
+  LSN lsn = wal_mgr_->append_record(hdr, payload);
+  operator delete(payload);
+
+  txn->set_prev_lsn(lsn);
+
+  // Apply change to the page
+  guard->hdr.page_lsn = lsn;
+  std::memcpy(slot_ptr, after_image.data(), slot_size_);
+  guard.mark_dirty();
+
+  return true;
+}
+
+bool HeapFile::delete_row(Transaction *txn, RID rid)
+{
+  assert(txn != nullptr && "Cannot perform delete without a transaction");
+
+  PageGuard guard = buffer_pool_->fetch_page(rid.page_id);
+  if (rid.slot >= slots_per_page_)
+  {
+    return false;
+  }
+
+  std::byte *slot_ptr = get_slot_ptr(*guard, rid.slot);
+  uint16_t offset = slot_ptr - guard->data();
+  if (get_tuple_size(slot_ptr) == 0)
+  {
+    return false;  // Already deleted
+  }
+
+  // Create before-image from current slot content
+  std::vector<std::byte> before_image(slot_size_);
+  std::memcpy(before_image.data(), slot_ptr, slot_size_);
+
+  // After-image is an empty (zeroed) slot
+  std::vector<std::byte> after_image(slot_size_, std::byte{0});
+
+  // Create and write the WAL record
+  auto *payload = UpdatePagePayload::create(rid.page_id, offset, slot_size_);
+  std::memcpy(const_cast<std::byte *>(payload->bef()), before_image.data(),
+              slot_size_);
+  std::memcpy(const_cast<std::byte *>(payload->aft()), after_image.data(),
+              slot_size_);
+
+  LogRecordHeader hdr{};
+  hdr.type = UPDATE;  // Deletion is an update to an empty state
+  hdr.txn_id = txn->get_id();
+  hdr.lr_length =
+      sizeof(LogRecordHeader) + sizeof(UpdatePagePayload) + 2 * slot_size_;
+  hdr.prev_lsn = txn->get_prev_lsn();
+
+  LSN lsn = wal_mgr_->append_record(hdr, payload);
+  operator delete(payload);
+
+  txn->set_prev_lsn(lsn);
+
+  // Apply change to the page (zero out the slot)
+  guard->hdr.page_lsn = lsn;
+  std::memset(slot_ptr, 0, slot_size_);
+  guard.mark_dirty();
 
   return true;
 }

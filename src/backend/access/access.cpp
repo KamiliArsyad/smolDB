@@ -1,3 +1,5 @@
+// ===== ../smolDB/src/backend/access/access.cpp =====
+
 #include "access.h"
 
 #include <boost/archive/binary_iarchive.hpp>
@@ -39,6 +41,73 @@ Row Row::from_bytes(const std::vector<std::byte>& data, const Schema& schema)
 
   return row;
 }
+
+// Explicitly instantiate the template methods for the default HeapFile type
+template <typename HeapFileT>
+bool Table<HeapFileT>::update_row(TransactionID txn_id, RID rid,
+                                  const Row& new_row)
+{
+  if (!txn_manager_)
+  {
+    throw std::runtime_error("TransactionManager not available in Table");
+  }
+  Transaction* txn = txn_manager_->get_transaction(txn_id);
+  if (!txn)
+  {
+    throw std::runtime_error("Transaction not active");
+  }
+
+  if (!heap_file_)
+  {
+    throw std::runtime_error("Table not properly initialized");
+  }
+
+  if (new_row.get_schema().size() != schema_.size())
+  {
+    throw std::invalid_argument("Row schema doesn't match table schema");
+  }
+
+  // Acquire exclusive lock before any modification
+  if (!lock_manager_->acquire_exclusive(txn, rid))
+  {
+    // Handle lock acquisition failure (e.g., timeout)
+    return false;
+  }
+
+  auto row_bytes = new_row.to_bytes();
+  return heap_file_->update(txn, rid, row_bytes);
+}
+
+template <typename HeapFileT>
+bool Table<HeapFileT>::delete_row(TransactionID txn_id, RID rid)
+{
+  if (!txn_manager_)
+  {
+    throw std::runtime_error("TransactionManager not available in Table");
+  }
+  Transaction* txn = txn_manager_->get_transaction(txn_id);
+  if (!txn)
+  {
+    throw std::runtime_error("Transaction not active");
+  }
+
+  if (!heap_file_)
+  {
+    throw std::runtime_error("Table not properly initialized");
+  }
+
+  // Acquire exclusive lock before any modification
+  if (!lock_manager_->acquire_exclusive(txn, rid))
+  {
+    // Handle lock acquisition failure (e.g., timeout)
+    return false;
+  }
+
+  return heap_file_->delete_row(txn, rid);
+}
+
+// Force instantiation for the default HeapFile type
+template class Table<HeapFile>;
 
 // Catalog implementation
 void Catalog::dump(const std::filesystem::path& path) const

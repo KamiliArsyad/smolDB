@@ -1,3 +1,5 @@
+// ===== ../smolDB/src/backend/storage/heapfile.h =====
+
 #ifndef HEAPFILE_H
 #define HEAPFILE_H
 #include <filesystem>
@@ -49,6 +51,13 @@ public:
 
   // Reads a tuple by RID
   bool get(Transaction* txn, RID rid, std::vector<std::byte> &out_tuple) const;
+
+  // Updates a tuple by RID. Returns false if RID is invalid or tuple too large.
+  bool update(Transaction* txn, RID rid,
+              std::span<const std::byte> new_tuple_data);
+
+  // Deletes a tuple by RID. Returns false if RID is invalid.
+  bool delete_row(Transaction* txn, RID rid);
 
   // Appends all records to out
   void full_scan(std::vector<std::vector<std::byte>> &out) const;

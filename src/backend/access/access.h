@@ -1,3 +1,5 @@
+// ===== ../smolDB/src/backend/access/access.h =====
+
 #ifndef ACCESS_H
 #define ACCESS_H
 #include <boost/serialization/access.hpp>
@@ -365,6 +367,12 @@ class Table
     out_row = Row::from_bytes(row_bytes, schema_);
     return true;
   }
+
+  // Update a row in the table
+  bool update_row(TransactionID txn_id, RID rid, const Row& new_row);
+
+  // Delete a row from the table
+  bool delete_row(TransactionID txn_id, RID rid);
 
   // Get all rows (full table scan)
   std::vector<Row> scan_all() const
