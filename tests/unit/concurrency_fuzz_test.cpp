@@ -14,6 +14,8 @@
 #include <vector>
 
 #define private public
+#include <barrier>
+
 #include "backend/smoldb.h"
 #undef private
 
@@ -394,4 +396,135 @@ TEST(ConcurrencyFuzzTest, HammerTheBufferPool)
   ASSERT_NO_THROW(db.shutdown());
 
   std::filesystem::remove_all(test_dir);
+}
+
+/**
+ * @class HeapFilePageRaceTest
+ * @brief Test fixture for provoking read-write data races on a single page
+ * within the HeapFile.
+ *
+ * This fixture creates a single HeapFile and pre-populates exactly one
+ * page with rows. This provides a "battleground" page where reader and writer
+ * threads will operate, maximizing contention to expose missing page-level
+ * latching.
+ */
+class HeapFilePageRaceTest : public ::testing::Test
+{
+ protected:
+  void SetUp() override
+  {
+    test_dir =
+        std::filesystem::temp_directory_path() / "heap_file_page_race_test";
+    std::filesystem::remove_all(test_dir);
+    std::filesystem::create_directories(test_dir);
+
+    db = std::make_unique<SmolDB>(test_dir, 16);
+    db->startup();
+    lock_mgr = db->lock_manager_.get();
+    txn_mgr = db->txn_manager_.get();
+
+    PageID first_page_id = db->buffer_pool_->allocate_page();
+    heap = std::make_unique<HeapFile>(db->buffer_pool_.get(),
+                                      db->wal_mgr_.get(), first_page_id,
+                                      /*max_tuple_size=*/32);
+
+    TransactionID txn = txn_mgr->begin();
+    size_t num_slots = heap->slots_per_page();
+    ASSERT_GT(num_slots, 0);
+    std::vector<std::byte> dummy_data(16, std::byte{0});
+    for (size_t i = 0; i < num_slots; ++i)
+    {
+      battleground_rids_.push_back(
+          heap->append(txn_mgr->get_transaction(txn), dummy_data));
+    }
+    ASSERT_EQ(heap->last_page_id(), first_page_id);
+    txn_mgr->commit(txn);
+  }
+
+  void TearDown() override
+  {
+    db->shutdown();
+    db.reset();
+    std::filesystem::remove_all(test_dir);
+  }
+
+  std::filesystem::path test_dir;
+  std::unique_ptr<SmolDB> db;
+  LockManager* lock_mgr;
+  TransactionManager* txn_mgr;
+  std::unique_ptr<HeapFile> heap;
+  std::vector<RID> battleground_rids_;
+};
+
+/**
+ * @test HeapFilePageRaceTest.ProvokeReadWritePageRace
+ * @brief Reliably triggers a read-vs-write data race if HeapFile methods are
+ * not internally synchronized with a page latch.
+ *
+ * This test is specifically designed to fail under TSan if the page-level data
+ * race bug is present. It works by having:
+ * 1. A "Scanner" thread that continuously calls `full_scan()`, which reads the
+ *    entire page's memory.
+ * 2. Multiple "Mutator" threads that continuously `update()` different rows on
+ *    that same page.
+ *
+ * The RID-level LockManager does NOT prevent this race, as the mutators lock
+ * different RIDs and the scanner acquires no locks. Without a physical page
+ * latch, TSan will detect the scanner's read is racing with the mutators'
+ * writes on the same page memory.
+ */
+TEST_F(HeapFilePageRaceTest, ProvokeReadWritePageRace)
+{
+  const size_t num_mutator_threads =
+      std::min((size_t)std::thread::hardware_concurrency() - 1,
+               battleground_rids_.size());
+
+  ASSERT_GT(num_mutator_threads, 0)
+      << "Test requires at least 2 threads to find a race.";
+
+  std::atomic<bool> stop_flag = false;
+  std::vector<std::thread> threads;
+
+  // --- The Scanner Thread ---
+  threads.emplace_back(
+      [&]()
+      {
+        std::vector<std::vector<std::byte>> scan_results;
+        while (!stop_flag.load())
+        {
+          // This read of the page will race with the writes below
+          // if there is no page latch.
+          heap->full_scan(scan_results);
+        }
+      });
+
+  // --- The Mutator Threads ---
+  for (size_t i = 0; i < num_mutator_threads; ++i)
+  {
+    threads.emplace_back(
+        [&, thread_id = i]()
+        {
+          std::vector<std::byte> thread_data(20, std::byte{uint8_t(thread_id)});
+
+          while (!stop_flag.load())
+          {
+            TransactionID txn_id = txn_mgr->begin();
+            Transaction* txn = txn_mgr->get_transaction(txn_id);
+            RID rid = battleground_rids_[thread_id];
+
+            lock_mgr->acquire_exclusive(txn, rid);
+            heap->update(txn, rid,
+                         thread_data);  // This write races with the scan
+            txn_mgr->commit(txn_id);
+          }
+        });
+  }
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(250));
+  stop_flag.store(true);
+
+  for (auto& t : threads)
+  {
+    t.join();
+  }
 }
