@@ -47,6 +47,8 @@ class TransactionManager
   Transaction* get_transaction(TransactionID txn_id);
 
  private:
+  void apply_undo(LSN lsn, const UpdatePagePayload* payload);
+
   LockManager* lock_manager_;
   WAL_mgr* wal_manager_;
   BufferPool* buffer_pool_;

@@ -37,7 +37,6 @@ static Schema make_simple_schema()
   return Schema{c0, c1};
 }
 
-// ... (Row tests and Table tests with MockHeapFile remain unchanged) ...
 TEST(RowTest, SetGetValueCorrect)
 {
   Schema schema = make_simple_schema();
@@ -48,35 +47,54 @@ TEST(RowTest, SetGetValueCorrect)
   EXPECT_EQ(boost::get<std::string>(row.get_value("name")), "Alice");
 }
 
-TEST(TableTest, InsertScanSingleRow)
+class TableTest : public ::testing::Test
+{
+ protected:
+  void SetUp() override
+  {
+    test_dir_ = std::filesystem::temp_directory_path() / "table_test_dummy";
+    std::filesystem::create_directories(test_dir_);
+    auto dummy_db_path = test_dir_ / "dummy.db";
+    auto dummy_wal_path = test_dir_ / "dummy.wal";
+
+    disk_mgr_ = std::make_unique<Disk_mgr>(dummy_db_path);
+    wal_mgr_ = std::make_unique<WAL_mgr>(dummy_wal_path);
+    buffer_pool_ =
+        std::make_unique<BufferPool>(16, disk_mgr_.get(), wal_mgr_.get());
+    lock_mgr_ = std::make_unique<LockManager>();
+    txn_mgr_ = std::make_unique<TransactionManager>(
+        lock_mgr_.get(), wal_mgr_.get(), buffer_pool_.get());
+  }
+
+  void TearDown() override { std::filesystem::remove_all(test_dir_); }
+
+  std::filesystem::path test_dir_;
+  std::unique_ptr<Disk_mgr> disk_mgr_;
+  std::unique_ptr<WAL_mgr> wal_mgr_;
+  std::unique_ptr<BufferPool> buffer_pool_;
+  std::unique_ptr<LockManager> lock_mgr_;
+  std::unique_ptr<TransactionManager> txn_mgr_;
+};
+
+TEST_F(TableTest, InsertScanSingleRow)
 {
   Schema schema = make_simple_schema();
-  auto mock_hf = std::make_unique<MockHeapFile>(nullptr, nullptr, 0, 256);
-
-  // Create a minimal, self-contained set of dependencies for this test.
-  auto test_dir = std::filesystem::temp_directory_path() / "table_test_dummy";
-  std::filesystem::create_directories(test_dir);
-  auto dummy_wal_path = test_dir / "dummy.wal";
-  auto lm = std::make_unique<LockManager>();
-  auto wm = std::make_unique<WAL_mgr>(dummy_wal_path);
-  // TransactionManager now needs a BufferPool, but we can pass nullptr for this
-  // isolated test as abort() is not called.
-  auto tm = std::make_unique<TransactionManager>(lm.get(), wm.get(), nullptr);
+  auto mock_hf = std::make_unique<MockHeapFile>(buffer_pool_.get(),
+                                                wal_mgr_.get(), 1, 256);
 
   Table<MockHeapFile> table(std::move(mock_hf), 1, "test_table", schema,
-                            lm.get(), tm.get());
-  TransactionID txn_id = tm->begin();
+                            lock_mgr_.get(), txn_mgr_.get());
+  TransactionID txn_id = txn_mgr_->begin();
+
   Row row(schema);
   row.set_value(0, int32_t(100));
   row.set_value(1, std::string("Name100"));
   table.insert_row(txn_id, row);
-  tm->commit(txn_id);
+  txn_mgr_->commit(txn_id);
 
   std::vector<Row> rows = table.scan_all();
   ASSERT_EQ(rows.size(), 1u);
   EXPECT_EQ(boost::get<int32_t>(rows[0].get_value(0)), 100);
-
-  std::filesystem::remove_all(test_dir);
 }
 
 // --------------------------------------------------------------------------------

@@ -30,9 +30,11 @@ public:
     if (file_size_bytes == -1) { // Should not happen for a valid file
       file_size_bytes = 0;
     }
-    // next_page_id_ will be 0 if file is empty, 1 if file has 1 page, etc.
-    // This means page IDs are 0-indexed.
-    next_page_id_.store(file_size_bytes / PAGE_SIZE);
+
+    PageID num_pages = file_size_bytes / PAGE_SIZE;
+    // CRITICAL FIX: The next page to allocate is always after the last existing page.
+    // If the file is empty or only has the header page, start allocating from Page 1.
+    next_page_id_.store(std::max((PageID)1, num_pages));
   }
   ~Disk_mgr()
   {
