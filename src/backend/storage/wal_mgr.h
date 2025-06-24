@@ -6,6 +6,7 @@
 #include <fstream>
 #include <future>
 #include <list>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -22,6 +23,7 @@ enum LR_TYPE
   UPDATE,
   COMMIT,
   ABORT,
+  CLR
 };
 
 #pragma pack(push, 1)
@@ -72,6 +74,30 @@ struct UpdatePagePayload
   }
 };
 
+// A CLR contains the standard update payload (the "undo" action)
+// plus the LSN of the next record to undo in the transaction chain.
+// This does NOT inherit from UpdatePagePayload to ensure the flexible
+// array member is the last member in the struct.
+struct CLR_Payload
+{
+  uint32_t page_id;
+  uint16_t offset;
+  uint16_t length;
+  LSN undoNextLSN;
+  std::byte data[];
+
+  static CLR_Payload* create(uint32_t pid, uint16_t off, uint16_t len,
+                             LSN undo_next)
+  {
+    size_t total = sizeof(CLR_Payload) + size_t(len) * sizeof(std::byte);
+    void* mem = operator new(total);
+    auto* clr = new (mem) CLR_Payload{pid, off, len, undo_next};
+    return clr;
+  }
+
+  const std::byte* compensation_data() const { return data; }
+};
+
 // A self-contained unit of work for the logger thread.
 struct LogRecordBatch
 {
@@ -97,13 +123,19 @@ class WAL_mgr
    */
   LSN append_record(LogRecordHeader& hdr, const void* payload = nullptr);
 
+  // We no longer implement recovery here. It's moved to RecoveryManager.
+  // TODO: REMOVE THIS AND THE FUNCTION BELOW IT. Kept for now for stable tests
   void recover(BufferPool& bfr_manager, const std::filesystem::path& path);
 
   void read_all_records_for_txn(
       uint64_t txn_id,
       std::vector<std::pair<LogRecordHeader, std::vector<char>>>& out);
 
-  // This method may be called externally and needs a lock
+  // Reads the entire WAL file into memory. Useful for recovery and aborts.
+  // In the future, this would be more sophisticated (e.g., LSN->offset map).
+  std::map<LSN, std::pair<LogRecordHeader, std::vector<char>>>
+  read_all_records();
+
   void flush_to_lsn(LSN target)
   {
     std::scoped_lock lock(general_mtx_);
@@ -118,7 +150,6 @@ class WAL_mgr
   std::atomic<LSN> next_lsn_ = 1;
   std::atomic<LSN> flushed_lsn_ = 0;
 
-  // Mtx to protect operations that don't go through the writer thread queue.
   std::mutex general_mtx_;
   std::mutex mtx_;
   std::condition_variable cv_;

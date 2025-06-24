@@ -5,12 +5,13 @@
 #include <memory>
 
 #include "access/access.h"
-#include "storage/heapfile.h"
-#include "storage/bfrpl.h"
-#include "storage/dsk_mgr.h"
-#include "storage/wal_mgr.h"
 #include "executor/trx.h"
 #include "executor/trx_mgr.h"
+#include "recovery_manager.h"  // For RecoveryCrashPoint
+#include "storage/bfrpl.h"
+#include "storage/dsk_mgr.h"
+#include "storage/heapfile.h"
+#include "storage/wal_mgr.h"
 
 class Transaction;
 
@@ -32,6 +33,10 @@ class SmolDB
    * Performs recovery from WAL and loads the catalog.
    */
   void startup();
+
+#ifndef NDEBUG
+  void startup_with_crash_point(RecoveryCrashPoint crash_point);
+#endif
 
   /**
    * @brief Shuts down the database system.
@@ -80,6 +85,7 @@ class SmolDB
   void abort_transaction(TransactionID txn_id);
  private:
   friend class HeapFileTest;  // Allow test to access internals
+  friend class AriesTest;
 
   std::filesystem::path db_directory_;
   std::filesystem::path db_file_path_;

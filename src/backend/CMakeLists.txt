@@ -3,6 +3,7 @@
 set(BACKEND_LIB_SRCS
         smoldb.cpp
         server.cpp
+        recovery_manager.cpp
 )
 
 # Define the header files. While not strictly needed for compilation here,
@@ -10,6 +11,7 @@ set(BACKEND_LIB_SRCS
 set(BACKEND_LIB_HDRS
         smoldb.h
         server.h
+        recovery_manager.h
 )
 
 # Include subdirectories that define their own libraries (storage_lib, access_lib)

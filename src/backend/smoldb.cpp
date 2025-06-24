@@ -3,6 +3,7 @@
 #include <iostream>
 
 #include "executor/lock_mgr.h"
+#include "recovery_manager.h"
 
 SmolDB::SmolDB(const std::filesystem::path& db_directory,
                size_t buffer_pool_size)
@@ -17,7 +18,7 @@ SmolDB::SmolDB(const std::filesystem::path& db_directory,
   wal_file_path_ = db_directory_ / "smoldb.wal";
   catalog_file_path_ = db_directory_ / "smoldb.cat";
 
-  // Initialization order is critical here
+  // All managers are created here, and only here. This is critical for tests.
   disk_mgr_ = std::make_unique<Disk_mgr>(db_file_path_);
   wal_mgr_ = std::make_unique<WAL_mgr>(wal_file_path_);
   buffer_pool_ = std::make_unique<BufferPool>(buffer_pool_size, disk_mgr_.get(),
@@ -26,31 +27,42 @@ SmolDB::SmolDB(const std::filesystem::path& db_directory,
   txn_manager_ = std::make_unique<TransactionManager>(
       lock_manager_.get(), wal_mgr_.get(), buffer_pool_.get());
   catalog_ = std::make_unique<Catalog>();
-  catalog_->set_storage_managers(buffer_pool_.get(), wal_mgr_.get());
-  catalog_->set_transaction_managers(lock_manager_.get(), txn_manager_.get());
 }
 
 SmolDB::~SmolDB()
 {
+  // If shutdown was not called, the system "crashed". unique_ptrs will clean
+  // up memory, but durability guarantees are lost.
   if (!is_shutdown_)
   {
-    // Ensure shutdown is called if user forgets, useful for RAII
-    shutdown();
+    // In a real crash, this destructor wouldn't even run. In our tests,
+    // it stops the WAL thread, mimicking a process exit.
   }
 }
 
 void SmolDB::startup()
 {
-  // 1. Load catalog from disk. If it doesn't exist, this is a no-op.
+  // The WAL is already running, which is fine. Recovery must serialize
+  // against it by using its own read-only view of the file.
+  RecoveryManager recovery_mgr(buffer_pool_.get(), wal_mgr_.get());
+  recovery_mgr.recover();
+
   catalog_->load(catalog_file_path_);
-
-  // 2. Perform recovery from WAL. This will replay any changes not yet
-  // persisted to the db file.
-  wal_mgr_->recover(*buffer_pool_, wal_file_path_);
-
-  // 3. Re-initialize table objects based on loaded catalog metadata.
+  catalog_->set_storage_managers(buffer_pool_.get(), wal_mgr_.get());
+  catalog_->set_transaction_managers(lock_manager_.get(), txn_manager_.get());
   catalog_->reinit_tables();
 }
+
+#ifndef NDEBUG
+void SmolDB::startup_with_crash_point(RecoveryCrashPoint crash_point)
+{
+  RecoveryManager recovery_mgr(buffer_pool_.get(), wal_mgr_.get());
+  recovery_mgr.set_crash_point(crash_point);
+
+  // As the test expects, this will throw an exception partway through.
+  recovery_mgr.recover();
+}
+#endif
 
 void SmolDB::shutdown()
 {
@@ -59,12 +71,14 @@ void SmolDB::shutdown()
     return;
   }
 
-  // 1. Persist the current state of the catalog to disk.
+  // Persist the catalog *before* flushing pages, in case the catalog
+  // itself has dirty pages.
   catalog_->dump(catalog_file_path_);
 
-  // 2. Flush all dirty pages from buffer pool to disk to ensure durability.
+  // Flush all data to disk.
   buffer_pool_->flush_all();
 
+  // The WAL_mgr destructor will be called after this, stopping the thread.
   is_shutdown_ = true;
 }
 
@@ -84,17 +98,14 @@ Table<>* SmolDB::get_table(uint8_t table_id)
   return catalog_->get_table(table_id);
 }
 
-TransactionID SmolDB::begin_transaction()
-{
-    return txn_manager_->begin();
-}
+TransactionID SmolDB::begin_transaction() { return txn_manager_->begin(); }
 
 void SmolDB::commit_transaction(TransactionID txn_id)
 {
-    txn_manager_->commit(txn_id);
+  txn_manager_->commit(txn_id);
 }
 
 void SmolDB::abort_transaction(TransactionID txn_id)
 {
-    txn_manager_->abort(txn_id);
+  txn_manager_->abort(txn_id);
 }

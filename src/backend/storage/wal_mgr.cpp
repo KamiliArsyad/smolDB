@@ -9,15 +9,17 @@
 WAL_mgr::WAL_mgr(const std::filesystem::path& path)
     : path_(path), wal_stream_(path, std::ios::binary | std::ios::app)
 {
+  // The writer thread starts on construction.
   writer_thread_ = std::thread(&WAL_mgr::writer_thread_main, this);
 }
 
 WAL_mgr::~WAL_mgr()
 {
-  stop_writer_.store(true);
-  cv_.notify_one();
+  // The writer thread is stopped and joined on destruction.
   if (writer_thread_.joinable())
   {
+    stop_writer_.store(true);
+    cv_.notify_one();
     writer_thread_.join();
   }
 }
@@ -55,12 +57,6 @@ void WAL_mgr::writer_thread_main()
       }
       wal_stream_.flush();
 
-      for (const auto& batch : local_queue)
-      {
-        wal_stream_.write(batch->data.data(), batch->data.size());
-      }
-      wal_stream_.flush();
-
       for (auto& batch : local_queue)
       {
         batch->flushed.set_value();
@@ -75,7 +71,7 @@ LSN WAL_mgr::append_record(LogRecordHeader& hdr, const void* payload)
   hdr.lsn = next_lsn_.fetch_add(1);
 
   auto batch = std::make_unique<LogRecordBatch>();
-  size_t payload_size = (payload) ? hdr.lr_length - sizeof(hdr) : 0;
+  size_t payload_size = hdr.lr_length - sizeof(hdr);
   batch->data.resize(sizeof(hdr) + payload_size);
 
   std::memcpy(batch->data.data(), &hdr, sizeof(hdr));
@@ -192,4 +188,35 @@ void WAL_mgr::recover(BufferPool& bfr_manager,
   }
 
   in.close();
+}
+
+std::map<LSN, std::pair<LogRecordHeader, std::vector<char>>>
+WAL_mgr::read_all_records()
+{
+  std::scoped_lock lock(general_mtx_);
+  std::map<LSN, std::pair<LogRecordHeader, std::vector<char>>> records;
+
+  std::ifstream in(path_, std::ios::binary);
+  if (!in.is_open())
+  {
+    return records;
+  }
+
+  while (in.peek() != EOF)
+  {
+    LogRecordHeader hdr;
+    in.read(reinterpret_cast<char*>(&hdr), sizeof(hdr));
+    if (in.gcount() != sizeof(hdr)) break;
+    if (hdr.lr_length < sizeof(LogRecordHeader)) break;
+
+    uint32_t payload_len = hdr.lr_length - sizeof(LogRecordHeader);
+    std::vector<char> buf(payload_len);
+    if (payload_len > 0)
+    {
+      in.read(buf.data(), payload_len);
+      if ((uint32_t)in.gcount() != payload_len) break;
+    }
+    records[hdr.lsn] = {hdr, std::move(buf)};
+  }
+  return records;
 }
