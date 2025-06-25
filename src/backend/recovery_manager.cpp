@@ -91,7 +91,7 @@ void RecoveryManager::redo_phase()
         dirty_page_table_.end())
       continue;
 
-    // Your deadlock fix is integrated here.
+    // deadlock fix is integrated here.
     {
       PageGuard guard = buffer_pool_->fetch_page(base_payload->page_id);
       auto page_reader = guard.read();

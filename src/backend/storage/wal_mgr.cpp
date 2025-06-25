@@ -6,9 +6,38 @@
 
 #include "bfrpl.h"
 
-WAL_mgr::WAL_mgr(const std::filesystem::path& path)
-    : path_(path), wal_stream_(path, std::ios::binary | std::ios::app)
+WAL_mgr::WAL_mgr(const std::filesystem::path& path) : path_(path)
 {
+  // Before starting the writer thread or opening the stream for appending,
+  // we must first scan the existing WAL to find the correct starting LSN.
+  LSN max_lsn = 0;
+  std::ifstream in(path_, std::ios::binary);
+  if (in.is_open())
+  {
+    while (in.peek() != EOF)
+    {
+      LogRecordHeader hdr;
+      in.read(reinterpret_cast<char*>(&hdr), sizeof(hdr));
+      if (in.gcount() != sizeof(hdr)) break;
+
+      max_lsn = std::max(max_lsn, hdr.lsn);
+
+      // Seek past the payload to get to the next record quickly.
+      if (hdr.lr_length > sizeof(LogRecordHeader))
+      {
+        in.seekg(hdr.lr_length - sizeof(LogRecordHeader), std::ios::cur);
+      }
+    }
+    in.close();
+  }
+
+  // Initialize our atomic counter to the next available LSN.
+  next_lsn_.store(max_lsn + 1);
+  flushed_lsn_.store(max_lsn);
+
+  // Now, open the stream in append mode for runtime writes.
+  wal_stream_.open(path_, std::ios::binary | std::ios::app);
+
   // The writer thread starts on construction.
   writer_thread_ = std::thread(&WAL_mgr::writer_thread_main, this);
 }
