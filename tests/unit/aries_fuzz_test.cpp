@@ -1,7 +1,7 @@
-
 #include <gtest/gtest.h>
 
 #include <map>
+#include <optional>
 #include <random>
 #include <thread>
 #include <vector>
@@ -13,14 +13,17 @@
 class AriesFuzzTest : public ::testing::Test
 {
  protected:
+  // Using a std::map gives us a stable key (page_id * C + slot) to represent
+  // RID.
+  using CanonicalState = std::map<uint64_t, std::optional<int32_t>>;
+  static constexpr auto DELETED = std::nullopt;
+
   void SetUp() override
   {
     test_dir_ = std::filesystem::temp_directory_path() / "aries_fuzz_test";
     std::filesystem::remove_all(test_dir_);
     std::filesystem::create_directories(test_dir_);
 
-    // Initial setup: create the DB and a table with some rows.
-    // This happens once before all the fuzzing cycles.
     Schema schema;
     schema.push_back({0, "id", Col_type::INT, false, {}});
 
@@ -33,18 +36,18 @@ class AriesFuzzTest : public ::testing::Test
     for (int i = 0; i < num_rows_; ++i)
     {
       Row row(schema);
-      row.set_value("id", 0);  // All rows start at value 0
+      row.set_value("id", 0);
       rids_.push_back(table->insert_row(setup_txn, row));
-      // Initialize our canonical model of the DB state.
-      canonical_state_[rids_.back().page_id * 1000 + rids_.back().slot] = 0;
+      canonical_state_[rid_to_key(rids_.back())] = 0;
     }
     db->commit_transaction(setup_txn);
-    db->shutdown();  // Clean shutdown ensures this initial state is durable.
+    db->shutdown();
   }
 
   void TearDown() override { std::filesystem::remove_all(test_dir_); }
 
-  // Runs one cycle of chaotic concurrent operations.
+  uint64_t rid_to_key(RID rid) { return rid.page_id * 10000 + rid.slot; }
+
   void chaos_phase()
   {
     auto db = std::make_unique<SmolDB>(test_dir_);
@@ -62,36 +65,58 @@ class AriesFuzzTest : public ::testing::Test
           {
             std::mt19937 gen(std::random_device{}() + i);
             std::uniform_int_distribution<> rid_dist(0, num_rows_ - 1);
-            std::bernoulli_distribution commit_dist(
-                0.7);  // 70% chance to commit
+            std::discrete_distribution<> op_dist(
+                {50, 25});  // 50% update, 25% delete
+            std::bernoulli_distribution commit_dist(0.7);
 
             for (int j = 0; j < ops_per_thread; ++j)
             {
               RID rid = rids_[rid_dist(gen)];
               TransactionID txn = db->begin_transaction();
-
               try
               {
-                Row row(schema);
-                int32_t new_val = gen();
-                row.set_value("id", new_val);
-                table->update_row(txn, rid, row);
-
-                if (commit_dist(gen))
+                bool committed = false;
+                // Check if row is currently considered deleted in our model.
+                // This isn't perfect under concurrency but good enough for
+                // fuzzing.
+                bool is_deleted;
                 {
-                  db->commit_transaction(txn);
-                  // Update our canonical model only on successful commit.
                   std::scoped_lock lock(mtx_);
-                  canonical_state_[rid.page_id * 1000 + rid.slot] = new_val;
+                  is_deleted = (canonical_state_[rid_to_key(rid)] == DELETED);
+                }
+
+                int op = is_deleted
+                             ? 1
+                             : op_dist(gen);  // If deleted, try to re-insert.
+
+                if (op == 0)
+                {  // UPDATE
+                  Row row(schema);
+                  int32_t new_val = gen();
+                  row.set_value("id", new_val);
+                  if (table->update_row(txn, rid, row) && commit_dist(gen))
+                  {
+                    db->commit_transaction(txn);
+                    std::scoped_lock lock(mtx_);
+                    canonical_state_[rid_to_key(rid)] = new_val;
+                    committed = true;
+                  }
                 }
                 else
-                {
-                  db->abort_transaction(txn);
+                {  // DELETE
+                  if (table->delete_row(txn, rid) && commit_dist(gen))
+                  {
+                    db->commit_transaction(txn);
+                    std::scoped_lock lock(mtx_);
+                    canonical_state_[rid_to_key(rid)] = DELETED;
+                    committed = true;
+                  }
                 }
+
+                if (!committed) db->abort_transaction(txn);
               }
               catch (const std::exception& e)
               {
-                // This can happen due to deadlocks, which is fine. Just abort.
                 db->abort_transaction(txn);
               }
             }
@@ -99,42 +124,50 @@ class AriesFuzzTest : public ::testing::Test
     }
 
     for (auto& t : threads) t.join();
-
-    // Crash the DB without a clean shutdown. Some txns are committed, some
-    // aborted. In-flight transactions from the chaos phase are now "losers".
-    db.reset();
+    db.reset();  // CRASH
   }
 
-  // Recovers the DB and verifies its state against our canonical model.
   void verification_phase()
   {
     auto db = std::make_unique<SmolDB>(test_dir_);
-    db->startup();  // Trigger ARIES recovery.
+    db->startup();
     Table<>* table = db->get_table(table_name_);
     ASSERT_NE(table, nullptr);
 
-    // Scan all rows from the recovered database.
     TransactionID scan_txn = db->begin_transaction();
-    std::map<uint64_t, int32_t> recovered_state;
+    CanonicalState recovered_state;
     for (const auto& rid : rids_)
     {
       Row row;
-      ASSERT_TRUE(table->get_row(scan_txn, rid, row));
-      recovered_state[rid.page_id * 1000 + rid.slot] =
-          boost::get<int32_t>(row.get_value("id"));
+      if (table->get_row(scan_txn, rid, row))
+      {
+        recovered_state[rid_to_key(rid)] =
+            boost::get<int32_t>(row.get_value("id"));
+      }
+      else
+      {
+        recovered_state[rid_to_key(rid)] = DELETED;
+      }
     }
     db->commit_transaction(scan_txn);
 
-    // The recovered state MUST EXACTLY match our canonical model of committed
-    // data.
     ASSERT_EQ(canonical_state_.size(), recovered_state.size());
-    for (const auto& [key, val] : canonical_state_)
+    for (const auto& [key, canonical_val] : canonical_state_)
     {
       ASSERT_TRUE(recovered_state.count(key));
-      ASSERT_EQ(val, recovered_state.at(key))
-          << "Value mismatch for RID key " << key;
+      auto recovered_val = recovered_state.at(key);
+      if (canonical_val.has_value())
+      {
+        ASSERT_TRUE(recovered_val.has_value());
+        ASSERT_EQ(canonical_val.value(), recovered_val.value())
+            << "Value mismatch for RID key " << key;
+      }
+      else
+      {
+        ASSERT_FALSE(recovered_val.has_value())
+            << "Row for RID key " << key << " should be deleted.";
+      }
     }
-
     db->shutdown();
   }
 
@@ -145,7 +178,7 @@ class AriesFuzzTest : public ::testing::Test
 
   // The "ground truth" model of what the database state should be.
   std::mutex mtx_;
-  std::map<uint64_t, int32_t> canonical_state_;
+  CanonicalState canonical_state_;
 
   std::filesystem::path test_dir_;
 };

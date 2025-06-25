@@ -382,3 +382,79 @@ TEST_F(AriesTest, MultipleLoserTransactions)
     db->commit_transaction(txn);
   }
 }
+
+TEST_F(AriesTest, EmptyTransactionDoesNotAffectState)
+{
+  // Phase 1: Setup a known state and shut down.
+  {
+    auto db = restart();
+    db->create_table(1, "users", make_simple_schema());
+    db->shutdown();
+  }
+
+  // Phase 2: Start a transaction but do nothing, then crash.
+  {
+    auto db = restart();
+    // This transaction will be in the ATT but have no update records.
+    TransactionID loser_txn = db->begin_transaction();
+    crash(db);
+  }
+
+  // Phase 3: Restart. Recovery should gracefully handle and abort the empty
+  // txn.
+  {
+    auto db = restart();
+    Table<>* table = db->get_table("users");
+    ASSERT_NE(table, nullptr);
+    // Just verifying that the system is in a valid state is enough.
+    EXPECT_EQ(table->scan_all().size(), 0);
+    db->shutdown();
+  }
+}
+
+TEST_F(AriesTest, UpdateSameRowMultipleTimesAndAbort)
+{
+  RID rid;
+  Schema schema = make_simple_schema();
+
+  // Phase 1: Setup initial state.
+  {
+    auto db = restart();
+    db->create_table(1, "users", schema);
+    Table<>* table = db->get_table("users");
+    TransactionID setup_txn = db->begin_transaction();
+    Row row(schema);
+    row.set_value("id", 100);
+    rid = table->insert_row(setup_txn, row);
+    db->commit_transaction(setup_txn);
+    db->shutdown();
+  }
+
+  // Phase 2: One transaction updates the same row twice, then crashes.
+  {
+    auto db = restart();
+    Table<>* table = db->get_table("users");
+    TransactionID loser_txn = db->begin_transaction();
+    Row row_v2(schema), row_v3(schema);
+    row_v2.set_value("id", 200);
+    row_v3.set_value("id", 300);
+
+    // Creates an LSN chain: UPDATE(to 200) -> UPDATE(to 300)
+    table->update_row(loser_txn, rid, row_v2);
+    table->update_row(loser_txn, rid, row_v3);
+
+    crash(db);
+  }
+
+  // Phase 3: Restart. UNDO must follow the chain all the way back.
+  {
+    auto db = restart();
+    Table<>* table = db->get_table("users");
+    TransactionID txn = db->begin_transaction();
+    Row out_row;
+    ASSERT_TRUE(table->get_row(txn, rid, out_row));
+    // Verify we are back at the original state, not the intermediate one.
+    EXPECT_EQ(boost::get<int32_t>(out_row.get_value("id")), 100);
+    db->commit_transaction(txn);
+  }
+}
