@@ -99,24 +99,18 @@ class DMLAtomicityHarness
               try
               {
                 auto result = mutator(txn_id, rid, new_value);
-                if (result.has_value())
+                if (result.has_value() && commit_dist(gen))
                 {
-                  if (commit_dist(gen))
-                  {
-                    // First, update our test's ground truth model. At this
-                    // point, the change is NOT visible to other transactions
-                    // because we still hold the exclusive lock.
-                    update_ground_truth(rid, result.value());
+                  std::scoped_lock lock(ground_truth_mutex_);
+                  // First, update our test's ground truth model. At this
+                  // point, the change is NOT visible to other transactions
+                  // because we still hold the exclusive lock.
+                  update_ground_truth(rid, result.value());
 
-                    // NOW, commit the transaction. This releases the lock and
-                    // makes the change visible, but our ground truth is already
-                    // up-to-date.
-                    db_.commit_transaction(txn_id);
-                  }
-                  else
-                  {
-                    db_.abort_transaction(txn_id);
-                  }
+                  // NOW, commit the transaction. This releases the lock and
+                  // makes the change visible, but our ground truth is already
+                  // up-to-date.
+                  db_.commit_transaction(txn_id);
                 }
                 else
                 {
@@ -170,9 +164,9 @@ class DMLAtomicityHarness
     db_.commit_transaction(txn_id);
   }
 
+  // ASSUMES CALLER HOLD `ground_truth_mutex_`
   void update_ground_truth(RID rid, int32_t new_value)
   {
-    std::scoped_lock lock(ground_truth_mutex_);
     if (new_value == DELETED_SENTINEL)
     {
       ground_truth_[rid] = {DELETED_SENTINEL};  // Mark as deleted
@@ -200,12 +194,12 @@ class DMLAtomicityHarness
     {
       if (table->get_row(txn_id, rid_to_read, row))
       {
-        int32_t observed_value = boost::get<int32_t>(row.get_value("id"));
         std::scoped_lock lock(ground_truth_mutex_);
+        int32_t observed_value = boost::get<int32_t>(row.get_value("id"));
         const auto& valid_states = ground_truth_.at(rid_to_read);
         if (valid_states.count(observed_value) == 0)
         {
-          std::cerr << "ATOMICTY VIOLATION: Read value " << observed_value
+          std::cerr << "ATOMICITY VIOLATION: Read value " << observed_value
                     << " for RID " << rid_to_read
                     << " which is not in the committed set." << std::endl;
           success = false;
@@ -221,7 +215,7 @@ class DMLAtomicityHarness
         const auto& valid_states = ground_truth_.at(rid_to_read);
         if (valid_states.count(DELETED_SENTINEL) == 0)
         {
-          std::cerr << "ATOMICTY VIOLATION: Failed to read RID " << rid_to_read
+          std::cerr << "ATOMICITY VIOLATION: Failed to read RID " << rid_to_read
                     << " which should exist." << std::endl;
           success = false;
         }
