@@ -28,8 +28,8 @@ class HeapFileTest : public ::testing::Test
 
     disk_mgr = std::make_unique<Disk_mgr>(db_path);
     wal_mgr = std::make_unique<WAL_mgr>(wal_path);
-    buffer_pool =
-        std::make_unique<BufferPool>(BUFFER_SIZE_FOR_TEST, disk_mgr.get(), wal_mgr.get());
+    buffer_pool = std::make_unique<BufferPool>(BUFFER_SIZE_FOR_TEST,
+                                               disk_mgr.get(), wal_mgr.get());
     lock_mgr = std::make_unique<LockManager>();
     txn_mgr = std::make_unique<TransactionManager>(
         lock_mgr.get(), wal_mgr.get(), buffer_pool.get());
@@ -129,7 +129,8 @@ TEST_F(HeapFileTest, PageAllocation)
 {
   PageID first_page = buffer_pool->allocate_page();
   // Max tuple size such that only one tuple fits per page
-  size_t slot_size_needed = PAGE_SIZE - sizeof(PageHeader);
+  size_t slot_size_needed =
+      PAGE_SIZE - sizeof(PageHeader) - HeapFile::BITMAP_SIZE_BYTES;
   size_t max_tuple_size = slot_size_needed - sizeof(uint32_t);
   HeapFile heap(buffer_pool.get(), wal_mgr.get(), first_page, max_tuple_size);
   TransactionID txn_id = txn_mgr->begin();
