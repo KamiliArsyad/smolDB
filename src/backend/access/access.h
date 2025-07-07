@@ -286,6 +286,61 @@ class Table
  public:
   Table() = default;
 
+  // For tests to inspect HeapFile properties
+  const HeapFileT* get_heap_file() const { return heap_file_.get(); }
+
+  class Iterator
+  {
+   public:
+    // C++ iterator traits
+    using iterator_category = std::forward_iterator_tag;
+    using value_type = std::pair<RID, Row>;
+    using pointer = const value_type*;
+    using reference = const value_type&;
+
+    // Dereference operator
+    reference operator*() const { return current_val_; }
+    pointer operator->() const { return &current_val_; }
+
+    // Prefix increment
+    Iterator& operator++()
+    {
+      find_next();
+      return *this;
+    }
+
+    // Equality operators
+    friend bool operator==(const Iterator& a, const Iterator& b)
+    {
+      return a.table_ == b.table_ && a.current_rid_ == b.current_rid_;
+    }
+    friend bool operator!=(const Iterator& a, const Iterator& b)
+    {
+      return !(a == b);
+    }
+
+   private:
+    friend class Table;  // Allow Table to call the private constructor
+
+    Iterator(Table<HeapFileT>* table, RID start_rid)
+        : table_(table), current_rid_(start_rid)
+    {
+    }
+
+    void find_next();  // The core logic to find the next valid row
+
+    Table<HeapFileT>* table_;
+    RID current_rid_;
+    value_type current_val_;  // Holds the current {RID, Row} pair
+  };
+
+  Iterator begin();
+  Iterator end();
+
+  // Make the iterator compatible with range-based for loops
+  Iterator cbegin() { return begin(); }
+  Iterator cend() { return end(); }
+
   /**
    * @brief Main ctor: injects a real or mock HeapFile
    */

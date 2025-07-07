@@ -42,6 +42,46 @@ Row Row::from_bytes(const std::vector<std::byte>& data, const Schema& schema)
   return row;
 }
 
+template <typename HeapFileT>
+void Table<HeapFileT>::Iterator::find_next()
+{
+  std::vector<std::byte> tuple_data;
+
+  // Call the new HeapFile method. It will advance current_rid_ to the next
+  // valid record.
+  if (table_->heap_file_->get_next_tuple(current_rid_, tuple_data))
+  {
+    current_val_.first = current_rid_;
+    current_val_.second = Row::from_bytes(tuple_data, table_->get_schema());
+
+    // Prepare the RID for the *next* search, which should start
+    // at the slot immediately following the one we just found.
+    current_rid_.slot++;
+  }
+  else
+  {
+    // No more tuples were found. Mark this iterator as the end.
+    current_rid_ = {table_->heap_file_->last_page_id() + 1, 0};
+  }
+}
+
+template <typename HeapFileT>
+typename Table<HeapFileT>::Iterator Table<HeapFileT>::begin()
+{
+  RID start_rid = {heap_file_->first_page_id(), 0};
+  Iterator it(this, start_rid);
+  it.find_next();  // Prime the iterator by finding the first valid record
+  return it;
+}
+
+template <typename HeapFileT>
+typename Table<HeapFileT>::Iterator Table<HeapFileT>::end()
+{
+  // The end iterator points to a conceptual slot just after the last page
+  RID end_rid = {heap_file_->last_page_id() + 1, 0};
+  return Iterator(this, end_rid);
+}
+
 // Explicitly instantiate the template methods for the default HeapFile type
 template <typename HeapFileT>
 bool Table<HeapFileT>::update_row(TransactionID txn_id, RID rid,
