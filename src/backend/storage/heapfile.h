@@ -1,5 +1,3 @@
-// ===== ../smolDB/src/backend/storage/heapfile.h =====
-
 #ifndef HEAPFILE_H
 #define HEAPFILE_H
 #include <filesystem>
