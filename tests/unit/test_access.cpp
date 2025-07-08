@@ -9,26 +9,7 @@
 
 #include "access.h"
 #include "backend/smoldb.h"
-
-// MockHeapFile remains for testing Table in isolation
-class MockHeapFile
-{
- public:
-  std::vector<std::vector<std::byte>> rows;
-  MockHeapFile(BufferPool*, WAL_mgr*, PageID, size_t) {}
-  RID append(Transaction*, std::span<const std::byte> t)
-  {
-    rows.emplace_back(t.begin(), t.end());
-    return {static_cast<PageID>(rows.size() - 1), 0};
-  }
-  void full_scan(std::vector<std::vector<std::byte>>& out) const { out = rows; }
-  bool get(Transaction*, RID rid, std::vector<std::byte>& out) const
-  {
-    if (rid.page_id >= rows.size() || rid.slot != 0) return false;
-    out = rows[rid.page_id];
-    return true;
-  }
-};
+#include "mock_heapfile.h"
 
 static Schema make_simple_schema()
 {

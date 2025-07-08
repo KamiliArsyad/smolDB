@@ -8,32 +8,10 @@
 #include "access.h"
 #include "executor/lock_mgr.h"
 #include "executor/trx_mgr.h"
+#include "mock_heapfile.h"
 #include "storage/bfrpl.h"    // Needed for the real BufferPool
 #include "storage/dsk_mgr.h"  // Needed for the real BufferPool
 #include "storage/wal_mgr.h"
-
-// Note: This MockHeapFile matches the structure of the one in test_access.cpp.
-// In a larger project, this might be shared in a test utility header.
-class MockHeapFile
-{
- public:
-  std::vector<std::vector<std::byte>> rows;
-  size_t max_tuple_size = 256;
-
-  // Mock constructor to match the real HeapFile signature
-  MockHeapFile(BufferPool*, WAL_mgr*, PageID, size_t max_size)
-      : max_tuple_size(max_size)
-  {
-  }
-
-  RID append(Transaction*, std::span<const std::byte> t)
-  {
-    rows.emplace_back(t.begin(), t.end());
-    return {static_cast<PageID>(rows.size() - 1), 0};
-  }
-
-  void full_scan(std::vector<std::vector<std::byte>>& out) const { out = rows; }
-};
 
 class AccessTest : public testing::Test
 {
