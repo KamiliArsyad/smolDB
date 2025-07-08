@@ -236,9 +236,6 @@ class Row
   }
 };
 
-// TODO: Re-evaluate this.
-constexpr size_t DEFAULT_COL_INDEX = 0;
-
 struct TableMetadata
 {
   Schema schema;
