@@ -55,6 +55,15 @@ class SmolDB
                     const Schema& schema, size_t max_tuple_size = 256);
 
   /**
+   * @brief Creates a new index on a table.
+   * @param table_id The ID of the table to index.
+   * @param key_column_id The ID of the column to use as the index key.
+   * @param index_name The name of the index (for future use).
+   */
+  void create_index(uint8_t table_id, uint8_t key_column_id,
+                    const std::string& index_name = {});
+
+  /**
    * @brief Retrieves a pointer to a table by its name.
    * @param table_name The name of the table.
    * @return A pointer to the table, or nullptr if not found.
@@ -83,6 +92,7 @@ class SmolDB
    * @brief Aborts an existing transaction.
    */
   void abort_transaction(TransactionID txn_id);
+
  private:
   friend class HeapFileTest;  // Allow test to access internals
   friend class AriesTest;

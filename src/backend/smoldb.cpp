@@ -3,6 +3,7 @@
 #include <iostream>
 
 #include "executor/lock_mgr.h"
+#include "index/idx.h"
 #include "recovery_manager.h"
 
 SmolDB::SmolDB(const std::filesystem::path& db_directory,
@@ -51,6 +52,7 @@ void SmolDB::startup()
   catalog_->set_storage_managers(buffer_pool_.get(), wal_mgr_.get());
   catalog_->set_transaction_managers(lock_manager_.get(), txn_manager_.get());
   catalog_->reinit_tables();
+  catalog_->build_all_indexes();
 }
 
 #ifndef NDEBUG
@@ -87,6 +89,13 @@ void SmolDB::create_table(uint8_t table_id, const std::string& table_name,
 {
   catalog_->create_table(table_id, table_name, schema, max_tuple_size);
 }
+
+void SmolDB::create_index(uint8_t table_id, uint8_t key_column_id,
+                          const std::string& index_name)
+{
+  catalog_->create_index(table_id, key_column_id, index_name);
+}
+
 
 Table<>* SmolDB::get_table(const std::string& table_name)
 {

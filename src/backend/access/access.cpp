@@ -1,5 +1,3 @@
-// ===== ../smolDB/src/backend/access/access.cpp =====
-
 #include "access.h"
 
 #include <boost/archive/binary_iarchive.hpp>
@@ -8,6 +6,10 @@
 #include <cstring>
 #include <fstream>
 #include <sstream>
+
+#include "../index/h_idx.h"
+#include "../index/idx.h"
+#include "../storage/mock_heapfile.h"
 
 // Row implementation
 std::vector<std::byte> Row::to_bytes() const
@@ -82,6 +84,52 @@ typename Table<HeapFileT>::Iterator Table<HeapFileT>::end()
   return Iterator(this, end_rid);
 }
 
+// Insert a row into the table
+template <typename HeapFileT>
+RID Table<HeapFileT>::insert_row(TransactionID txn_id, const Row& row)
+{
+  if (!txn_manager_)
+  {
+    throw std::runtime_error("TransactionManager not available in Table");
+  }
+  Transaction* txn = txn_manager_->get_transaction(txn_id);
+  if (!txn)
+  {
+    throw std::runtime_error("Transaction not active");
+  }
+
+  if (!heap_file_)
+  {
+    throw std::runtime_error("Table not properly initialized");
+  }
+
+  // Validate row schema matches table schema
+  if (row.get_schema().size() != schema_.size())
+  {
+    throw std::invalid_argument("Row schema doesn't match table schema");
+  }
+
+  // Convert row to bytes and store
+  auto row_bytes = row.to_bytes();
+
+  // With S2PL, we must acquire an exclusive lock on the RID *before* making
+  // the modification. For an insert, the RID doesn't exist yet, so we don't
+  // lock here, but the append operation itself is atomic and will generate a
+  // new RID which the transaction implicitly holds an X-lock on.
+  RID new_rid = heap_file_->append(txn, row_bytes);
+  lock_manager_->acquire_exclusive(txn, new_rid);
+
+  if (index_)
+  {
+    index_->insert_entry(row, new_rid);
+
+    // Add the compensating action to the transaction's private undo log.
+    txn->add_index_undo({IndexUndoType::REVERSE_INSERT, index_, row, new_rid});
+  }
+
+  return new_rid;
+}
+
 // Explicitly instantiate the template methods for the default HeapFile type
 template <typename HeapFileT>
 bool Table<HeapFileT>::update_row(TransactionID txn_id, RID rid,
@@ -110,8 +158,30 @@ bool Table<HeapFileT>::update_row(TransactionID txn_id, RID rid,
   // Acquire exclusive lock before any modification
   if (!lock_manager_->acquire_exclusive(txn, rid))
   {
-    // Handle lock acquisition failure (e.g., timeout)
+    // TODO: Handle lock acquisition failure (e.g., timeout)
     return false;
+  }
+
+  // Handle index update BEFORE heap file update ---
+  if (index_)
+  {
+    // To handle a key update, we need both the old key and the new key.
+    // Fetch the row state as it exists *before* this update.
+    std::vector<std::byte> old_bytes;
+    if (!heap_file_->get(txn, rid, old_bytes))
+    {
+      return false;  // Row doesn't exist or is a tombstone.
+    }
+    Row old_row = Row::from_bytes(old_bytes, schema_);
+
+    if (index_->update_entry(old_row, new_row, rid))
+    {
+      // Operation success;
+      txn->add_index_undo(
+          {IndexUndoType::REVERSE_DELETE, index_, old_row, rid});
+      txn->add_index_undo(
+          {IndexUndoType::REVERSE_INSERT, index_, new_row, rid});
+    }
   }
 
   auto row_bytes = new_row.to_bytes();
@@ -139,8 +209,25 @@ bool Table<HeapFileT>::delete_row(TransactionID txn_id, RID rid)
   // Acquire exclusive lock before any modification
   if (!lock_manager_->acquire_exclusive(txn, rid))
   {
-    // Handle lock acquisition failure (e.g., timeout)
+    // TODO: Handle lock acquisition failure (e.g., timeout)
     return false;
+  }
+
+  if (index_)
+  {
+    // To get the key for the index, we MUST fetch the row before it's deleted.
+    std::vector<std::byte> old_bytes;
+    if (!heap_file_->get(txn, rid, old_bytes))
+    {
+      // The row doesn't exist or is already a tombstone, so nothing to do.
+      return false;
+    }
+
+    Row old_row = Row::from_bytes(old_bytes, schema_);
+    index_->delete_entry(old_row);
+
+    // Add the compensating action to the transaction's private undo log.
+    txn->add_index_undo({IndexUndoType::REVERSE_DELETE, index_, old_row, rid});
   }
 
   return heap_file_->delete_row(txn, rid);
@@ -148,8 +235,11 @@ bool Table<HeapFileT>::delete_row(TransactionID txn_id, RID rid)
 
 // Force instantiation for the default HeapFile type
 template class Table<HeapFile>;
+template class Table<MockHeapFile>;
 
 // Catalog implementation
+Catalog::~Catalog() = default;
+
 void Catalog::dump(const std::filesystem::path& path) const
 {
   std::ofstream ofs{path, std::ios::binary};
@@ -280,5 +370,42 @@ void Catalog::reinit_tables()
     tables_[table_id] = std::make_unique<Table<>>(
         std::move(heap_file), table_id, meta.table_name, meta.schema,
         lock_manager_, txn_manager_);
+  }
+}
+
+void Catalog::create_index(uint8_t table_id, uint8_t key_column_id,
+                           const std::string& index_name)
+{
+  if (m_schemas_.find(table_id) == m_schemas_.end())
+  {
+    throw std::invalid_argument(
+        "Cannot create index for non-existent table ID " +
+        std::to_string(table_id));
+  }
+  if (indexes_.count(table_id))
+  {
+    throw std::invalid_argument("Index for table ID " +
+                                std::to_string(table_id) + " already exists.");
+  }
+
+  // For now, we only support one type of index.
+  indexes_[table_id] = std::make_unique<InMemoryHashIndex>(key_column_id);
+}
+
+Index* Catalog::get_index(uint8_t table_id)
+{
+  auto it = indexes_.find(table_id);
+  if (it != indexes_.end())
+  {
+    return it->second.get();
+  }
+  return nullptr;
+}
+
+void Catalog::build_all_indexes()
+{
+  for (auto const& [table_id, index] : indexes_)
+  {
+    index->build(get_table(table_id));
   }
 }

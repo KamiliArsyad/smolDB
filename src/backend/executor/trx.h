@@ -5,6 +5,7 @@
 #include <mutex>
 #include <unordered_set>
 
+#include "../index/idx_undo.h"
 #include "../storage/heapfile.h"  // For RID
 #include "../storage/storage.h"   // For LSN
 
@@ -51,11 +52,16 @@ class Transaction
   TransactionState get_state() const { return state_; }
   LSN get_prev_lsn() const { return prev_lsn_; }
   const std::unordered_set<RID>& get_held_locks() const { return held_locks_; }
+  const std::vector<IndexUndoAction>& get_index_undo_log() const { return index_undo_log_; }
 
   // Setters (should be called with the transaction's mutex held)
   void set_state(TransactionState state) { state_ = state; }
   void set_prev_lsn(LSN prev_lsn) { prev_lsn_ = prev_lsn; }
   void add_held_lock(const RID& rid) { held_locks_.insert(rid); }
+  void add_index_undo(IndexUndoAction&& undo_action)
+  {
+    index_undo_log_.emplace_back(std::move(undo_action));
+  }
 
   std::mutex& get_mutex() { return mutex_; }
 
@@ -69,6 +75,9 @@ class Transaction
 
   // A set of all RIDs locked by this transaction.
   std::unordered_set<RID> held_locks_;
+
+  // A list of modifications made to in-memory indexes by this transaction.
+  std::vector<IndexUndoAction> index_undo_log_;
 
   // Mutex to protect modifications to the transaction's state (e.g., prev_lsn)
   std::mutex mutex_;

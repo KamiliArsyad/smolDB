@@ -8,6 +8,7 @@
 #define private public
 #include "access.h"
 #undef private
+#include "idx.h"
 
 TEST(DumpLoadTest, Storage)
 {

@@ -20,10 +20,14 @@
 #include "../storage/heapfile.h"
 #include "../storage/storage.h"
 
+class Index;
+
 // ---------------------------------------------------------------------
 // std::chrono <-> Boost.Serialization
 // ---------------------------------------------------------------------
 #include <boost/serialization/split_free.hpp>
+
+#include "value.h"
 
 namespace boost::serialization
 {
@@ -80,8 +84,6 @@ inline void serialize(Ar& ar, std::chrono::time_point<Clock, Duration>& tp,
 
 }  // namespace boost::serialization
 
-using datetime = std::chrono::system_clock::time_point;
-
 enum class Col_type
 {
   INT,
@@ -108,8 +110,6 @@ struct Column
     ar & id & name & type & nullable & default_bytes;
   }
 };
-
-using Value = boost::variant<int32_t, float, std::string, datetime>;
 
 /**
  * @brief A vector of column definition.
@@ -236,6 +236,9 @@ class Row
   }
 };
 
+// TODO: Re-evaluate this.
+constexpr size_t DEFAULT_COL_INDEX = 0;
+
 struct TableMetadata
 {
   Schema schema;
@@ -274,6 +277,7 @@ class Table
   std::unique_ptr<HeapFileT> heap_file_;
   LockManager* lock_manager_ = nullptr;        // Not owned
   TransactionManager* txn_manager_ = nullptr;  // Not owned
+  Index* index_ = nullptr;                     // Not owned, can be nullptr
 
   friend class boost::serialization::access;
   template <class Ar>
@@ -347,51 +351,19 @@ class Table
   explicit Table(std::unique_ptr<HeapFileT> heap_file, uint8_t table_id = 0,
                  std::string table_name = {}, Schema schema = {},
                  LockManager* lock_mgr = nullptr,
-                 TransactionManager* txn_mgr = nullptr)
+                 TransactionManager* txn_mgr = nullptr, Index* index = nullptr)
       : table_id_(table_id),
         table_name_(std::move(table_name)),
         schema_(std::move(schema)),
         heap_file_(std::move(heap_file)),
         lock_manager_(lock_mgr),
-        txn_manager_(txn_mgr)
+        txn_manager_(txn_mgr),
+        index_(index)
   {
   }
 
   // Insert a row into the table
-  RID insert_row(TransactionID txn_id, const Row& row)
-  {
-    if (!txn_manager_)
-    {
-      throw std::runtime_error("TransactionManager not available in Table");
-    }
-    Transaction* txn = txn_manager_->get_transaction(txn_id);
-    if (!txn)
-    {
-      throw std::runtime_error("Transaction not active");
-    }
-
-    if (!heap_file_)
-    {
-      throw std::runtime_error("Table not properly initialized");
-    }
-
-    // Validate row schema matches table schema
-    if (row.get_schema().size() != schema_.size())
-    {
-      throw std::invalid_argument("Row schema doesn't match table schema");
-    }
-
-    // Convert row to bytes and store
-    auto row_bytes = row.to_bytes();
-
-    // With S2PL, we must acquire an exclusive lock on the RID *before* making
-    // the modification. For an insert, the RID doesn't exist yet, so we don't
-    // lock here, but the append operation itself is atomic and will generate a
-    // new RID which the transaction implicitly holds an X-lock on.
-    RID new_rid = heap_file_->append(txn, row_bytes);
-    lock_manager_->acquire_exclusive(txn, new_rid);
-    return new_rid;
-  }
+  RID insert_row(TransactionID txn_id, const Row& row);
 
   // Get a single row by its RID
   bool get_row(TransactionID txn_id, RID rid, Row& out_row) const
@@ -454,12 +426,15 @@ class Table
   uint8_t get_table_id() const { return table_id_; }
   const std::string& get_table_name() const { return table_name_; }
   const Schema& get_schema() const { return schema_; }
+  Index* get_index() const { return index_; }
 };
 
 class Catalog
 {
  private:
   std::unordered_map<uint8_t, TableMetadata> m_schemas_;
+  std::unordered_map<uint8_t, std::unique_ptr<Index>>
+      indexes_;  // TableId -> Index
   std::unordered_map<uint8_t, std::unique_ptr<Table<>>> tables_;
 
   // These are not persisted; they are set at runtime by a DB engine object.
@@ -477,6 +452,7 @@ class Catalog
 
  public:
   Catalog() = default;
+  ~Catalog();
 
   void set_storage_managers(BufferPool* bp, WAL_mgr* wm)
   {
@@ -493,6 +469,11 @@ class Catalog
   void create_table(uint8_t table_id, const std::string& table_name,
                     const Schema& schema, size_t max_tuple_size = 256);
 
+  // Create an index for a table on a specific column
+  void create_index(uint8_t table_id, uint8_t key_column_id,
+                    const std::string& index_name = {});
+  Index* get_index(uint8_t table_id);
+
   // Get table by ID
   Table<>* get_table(uint8_t table_id);
 
@@ -507,6 +488,11 @@ class Catalog
 
   // Reinitialize all tables after loading from disk
   void reinit_tables();
+
+  /**
+   * @brief Builds all existing indexes in-memory from scratch.
+   */
+  void build_all_indexes();
 };
 
 #endif  // ACCESS_H

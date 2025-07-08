@@ -8,6 +8,7 @@
 
 #include "../storage/bfrpl.h"
 #include "../storage/db_hdr_page.h"
+#include "../index/idx.h"
 
 TransactionManager::TransactionManager(LockManager* lock_manager,
                                        WAL_mgr* wal_manager,
@@ -40,7 +41,7 @@ TransactionID TransactionManager::begin()
   auto page = header_page_guard.write();
   auto* header_page_data = reinterpret_cast<DBHeaderPage*>(page->data());
   header_page_data->next_transaction_id_ = next_txn_id_.load();
-  header_page_guard.mark_dirty(); // Ensure this change is flushed eventually
+  header_page_guard.mark_dirty();  // Ensure this change is flushed eventually
 
   auto txn = std::make_unique<Transaction>(new_txn_id);
 
@@ -104,6 +105,24 @@ void TransactionManager::abort(TransactionID txn_id)
   if (!txn)
   {
     return;  // Already completed
+  }
+
+  // We undo in reverse order of operations.
+  const auto& index_undo_log = txn->get_index_undo_log();
+  for (auto it = index_undo_log.rbegin(); it != index_undo_log.rend(); ++it)
+  {
+    const auto& action = *it;
+    switch (action.type)
+    {
+      case IndexUndoType::REVERSE_INSERT:
+        // The original operation was an insert, so we must delete.
+        action.index->delete_entry(action.row);
+        break;
+      case IndexUndoType::REVERSE_DELETE:
+        // The original operation was a delete, so we must re-insert.
+        action.index->insert_entry(action.row, action.rid);
+        break;
+    }
   }
 
   // This is now a full, ARIES-compliant runtime abort.
