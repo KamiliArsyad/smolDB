@@ -5,13 +5,11 @@
 #include <mutex>
 #include <unordered_set>
 
+#include "trx_types.h"
+
 #include "../index/idx_undo.h"
 #include "../storage/heapfile.h"  // For RID
 #include "../storage/storage.h"   // For LSN
-
-// A unique identifier for a transaction.
-using TransactionID = uint64_t;
-constexpr TransactionID INVALID_TXN_ID = 0;
 
 // Hash function for RID to be used in unordered_set
 namespace std
