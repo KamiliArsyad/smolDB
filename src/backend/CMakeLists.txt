@@ -19,6 +19,7 @@ add_subdirectory(storage)
 add_subdirectory(access)
 add_subdirectory(executor)
 add_subdirectory(index)
+add_subdirectory(proc)
 
 # Create the library from its specific sources.
 add_library(backend_lib STATIC
@@ -48,6 +49,7 @@ target_link_libraries(backend_lib
         access_lib
         executor_lib
         idx_lib
+        proc_lib
 )
 
 # Link the main executable against our newly defined backend library.

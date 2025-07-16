@@ -107,6 +107,11 @@ Table<>* SmolDB::get_table(uint8_t table_id)
   return catalog_->get_table(table_id);
 }
 
+ProcedureManager* SmolDB::get_procedure_manager() const
+{
+  return proc_manager_.get();
+}
+
 TransactionID SmolDB::begin_transaction() { return txn_manager_->begin(); }
 
 void SmolDB::commit_transaction(TransactionID txn_id)

@@ -8,6 +8,7 @@
 #include "config.h"
 #include "executor/trx.h"
 #include "executor/trx_mgr.h"
+#include "proc_mgr.h"
 #include "recovery_manager.h"  // For RecoveryCrashPoint
 #include "storage/bfrpl.h"
 #include "storage/dsk_mgr.h"
@@ -78,6 +79,11 @@ class SmolDB
   Table<>* get_table(uint8_t table_id);
 
   /**
+   * @brief Retrieves the procedure manager to register or execute procedures.
+   */
+  [[nodiscard]] ProcedureManager* get_procedure_manager() const;
+
+  /**
    * @brief Begins a new transaction.
    * @return The ID of the transaction.
    */
@@ -110,6 +116,7 @@ class SmolDB
   std::unique_ptr<LockManager> lock_manager_;
   std::unique_ptr<TransactionManager> txn_manager_;
   std::unique_ptr<Catalog> catalog_;
+  std::unique_ptr<ProcedureManager> proc_manager_;
 };
 
 #endif  // SMOLDB_H

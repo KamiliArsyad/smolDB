@@ -20,7 +20,7 @@ target_include_directories(smoldb_unit_tests_run
         ${CMAKE_SOURCE_DIR}/src/
 )
 
-target_link_libraries(smoldb_unit_tests_run gtest gtest_main backend_lib storage_lib access_lib executor_lib idx_lib)
+target_link_libraries(smoldb_unit_tests_run gtest gtest_main backend_lib storage_lib access_lib executor_lib idx_lib proc_lib)
 
 if (ENABLE_TSAN)
     message(STATUS "TSan is enabled, configuring ASLR wrapper for tests.")

@@ -1,5 +1,7 @@
 #ifndef TRX_TYPES_H
 #define TRX_TYPES_H
+#pragma once
+#include <cstdint>
 
 // A unique identifier for a transaction.
 using TransactionID = uint64_t;
