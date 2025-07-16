@@ -6,9 +6,8 @@
 #include "index/idx.h"
 #include "recovery_manager.h"
 
-SmolDB::SmolDB(const std::filesystem::path& db_directory,
-               size_t buffer_pool_size)
-    : db_directory_(db_directory)
+SmolDB::SmolDB(const smoldb::DBConfig& config)
+    : db_directory_(config.db_directory)
 {
   if (!std::filesystem::exists(db_directory_))
   {
@@ -22,8 +21,8 @@ SmolDB::SmolDB(const std::filesystem::path& db_directory,
   // All managers are created here, and only here. This is critical for tests.
   disk_mgr_ = std::make_unique<Disk_mgr>(db_file_path_);
   wal_mgr_ = std::make_unique<WAL_mgr>(wal_file_path_);
-  buffer_pool_ = std::make_unique<BufferPool>(buffer_pool_size, disk_mgr_.get(),
-                                              wal_mgr_.get());
+  buffer_pool_ = std::make_unique<BufferPool>(config.buffer_pool_size_frames,
+                                              disk_mgr_.get(), wal_mgr_.get());
   lock_manager_ = std::make_unique<LockManager>();
   txn_manager_ = std::make_unique<TransactionManager>(
       lock_manager_.get(), wal_mgr_.get(), buffer_pool_.get());
@@ -97,7 +96,6 @@ void SmolDB::create_index(uint8_t table_id, uint8_t key_column_id,
   catalog_->create_index(table_id, key_column_id, index_name);
   catalog_->dump(catalog_file_path_);
 }
-
 
 Table<>* SmolDB::get_table(const std::string& table_name)
 {

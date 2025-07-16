@@ -245,7 +245,8 @@ class AtomicityFuzzTest : public ::testing::Test
     std::filesystem::create_directories(test_dir);
 
     // Use a small buffer pool to increase pressure
-    db = std::make_unique<SmolDB>(test_dir, 16);
+    smoldb::DBConfig config{test_dir, 16};
+    db = std::make_unique<SmolDB>(config);
     db->startup();
 
     // Create a table with a few rows to work on
@@ -353,7 +354,8 @@ TEST(ConcurrencyFuzzTest, HammerTheBufferPool)
   std::filesystem::remove_all(test_dir);
   std::filesystem::create_directories(test_dir);
 
-  SmolDB db(test_dir, 32);
+  smoldb::DBConfig config{test_dir, 32};
+  SmolDB db(config);
   db.startup();
 
   std::atomic<bool> stop_flag = false;
@@ -412,7 +414,8 @@ class HeapFilePageRaceTest : public ::testing::Test
     std::filesystem::remove_all(test_dir);
     std::filesystem::create_directories(test_dir);
 
-    db = std::make_unique<SmolDB>(test_dir, 16);
+    smoldb::DBConfig config{test_dir, 16};
+    db = std::make_unique<SmolDB>(config);
     db->startup();
     lock_mgr = db->lock_manager_.get();
     txn_mgr = db->txn_manager_.get();

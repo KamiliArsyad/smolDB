@@ -21,6 +21,7 @@ void InMemoryHashIndex::delete_entry(const Row& row)
   map_.erase(key);
 }
 
+// TODO: Test this
 bool InMemoryHashIndex::update_entry(const Row& old_row, const Row& new_row,
                                      const RID& rid)
 {

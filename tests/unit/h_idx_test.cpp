@@ -14,7 +14,8 @@ class HashIndexTest : public ::testing::Test
     std::filesystem::remove_all(test_dir);
     std::filesystem::create_directories(test_dir);
 
-    db = std::make_unique<SmolDB>(test_dir);
+    smoldb::DBConfig config{test_dir, 128};
+    db = std::make_unique<SmolDB>(config);
     db->startup();
 
     // Setup a table with a primary key-like column
@@ -142,7 +143,8 @@ TEST_F(HashIndexTest, BuildIndexOnRestart)
   db.reset();
 
   // Restart. This should trigger the build process.
-  db = std::make_unique<SmolDB>(test_dir);
+  smoldb::DBConfig config(test_dir);
+  db = std::make_unique<SmolDB>(config);
   db->startup();
 
   Table<>* new_table = db->get_table(1);

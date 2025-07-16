@@ -27,7 +27,8 @@ class AriesFuzzTest : public ::testing::Test
     Schema schema;
     schema.push_back({0, "id", Col_type::INT, false, {}});
 
-    auto db = std::make_unique<SmolDB>(test_dir_);
+    smoldb::DBConfig config{test_dir_};
+    auto db = std::make_unique<SmolDB>(config);
     db->startup();
     db->create_table(1, table_name_, schema);
 
@@ -50,7 +51,8 @@ class AriesFuzzTest : public ::testing::Test
 
   void chaos_phase()
   {
-    auto db = std::make_unique<SmolDB>(test_dir_);
+    smoldb::DBConfig config(test_dir_);
+    auto db = std::make_unique<SmolDB>(config);
     db->startup();
     Table<>* table = db->get_table(table_name_);
     Schema schema = table->get_schema();
@@ -129,7 +131,8 @@ class AriesFuzzTest : public ::testing::Test
 
   void verification_phase()
   {
-    auto db = std::make_unique<SmolDB>(test_dir_);
+    smoldb::DBConfig config{test_dir_};
+    auto db = std::make_unique<SmolDB>(config);
     db->startup();
     Table<>* table = db->get_table(table_name_);
     ASSERT_NE(table, nullptr);

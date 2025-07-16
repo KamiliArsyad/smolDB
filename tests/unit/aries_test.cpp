@@ -74,7 +74,8 @@ class AriesTest : public ::testing::Test
 
   std::unique_ptr<SmolDB> restart(size_t buffer_pool_size = 16)
   {
-    auto db = std::make_unique<SmolDB>(test_dir_, buffer_pool_size);
+    smoldb::DBConfig config{test_dir_, buffer_pool_size};
+    auto db = std::make_unique<SmolDB>(config);
     db->startup();
     return db;
   }
@@ -96,7 +97,8 @@ TEST_F(AriesTest, CrashAfterCommit)
 
   // Phase 1: Setup a durable state (create table, clean shutdown)
   {
-    auto db = std::make_unique<SmolDB>(test_dir_);
+    smoldb::DBConfig config{test_dir_};
+    auto db = std::make_unique<SmolDB>(config);
     db->startup();
     db->create_table(1, "users", schema);
     db->shutdown();
@@ -213,7 +215,8 @@ TEST_F(AriesTest, CrashDuringUndoRecoversCorrectly)
 
   // Phase 3: Restart but inject a crash during the undo phase.
   {
-    auto db = std::make_unique<SmolDB>(test_dir_);
+    smoldb::DBConfig config(test_dir_);
+    auto db = std::make_unique<SmolDB>(config);
     // The test fails here because it doesn't throw.
     ASSERT_THROW(db->startup_with_crash_point(RecoveryCrashPoint::DURING_UNDO),
                  std::runtime_error);

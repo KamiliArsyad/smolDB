@@ -15,7 +15,8 @@ class HeapFileBitmapTest : public ::testing::Test
     std::filesystem::remove_all(test_dir);
     std::filesystem::create_directories(test_dir);
 
-    db = std::make_unique<SmolDB>(test_dir, 16);
+    smoldb::DBConfig config{test_dir, BUFFER_SIZE_FOR_TEST};
+    db = std::make_unique<SmolDB>(config);
     db->startup();
   }
 

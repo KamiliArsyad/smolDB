@@ -16,7 +16,8 @@ class AriesCrashRecoveryTest
 
     // Phase 1: Create a durable DB state with one row.
     {
-      auto db = std::make_unique<SmolDB>(test_dir_);
+      smoldb::DBConfig config{test_dir_};
+      auto db = std::make_unique<SmolDB>(config);
       db->startup();
       db->create_table(1, "users", make_simple_schema());
       Table<> *table = db->get_table("users");
@@ -30,7 +31,8 @@ class AriesCrashRecoveryTest
     // Phase 2: Create a WAL file containing a loser transaction that updated
     // the row.
     {
-      auto db = std::make_unique<SmolDB>(test_dir_);
+      smoldb::DBConfig config(test_dir_);
+      auto db = std::make_unique<SmolDB>(config);
       db->startup();
       Table<>* table = db->get_table("users");
       TransactionID loser_txn = db->begin_transaction();
@@ -61,14 +63,16 @@ TEST_P(AriesCrashRecoveryTest, RecoversCorrectlyAfterCrashingDuringRecovery)
   // Phase 3: Attempt recovery, but inject a crash at the specified point.
   // This is expected to throw. The system is left in a "half-recovered" state.
   {
-    auto db = std::make_unique<SmolDB>(test_dir_);
+    smoldb::DBConfig config(test_dir_);
+    auto db = std::make_unique<SmolDB>(config);
     ASSERT_THROW(db->startup_with_crash_point(crash_point), std::runtime_error);
   }
 
   // Phase 4: Restart AGAIN. This time, recovery must run to completion.
   std::unique_ptr<SmolDB> db;
   ASSERT_NO_THROW({
-    db = std::make_unique<SmolDB>(test_dir_);
+    smoldb::DBConfig config(test_dir_);
+    db = std::make_unique<SmolDB>(config);
     db->startup();
   });
 

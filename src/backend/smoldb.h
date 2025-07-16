@@ -5,6 +5,7 @@
 #include <memory>
 
 #include "access/access.h"
+#include "config.h"
 #include "executor/trx.h"
 #include "executor/trx_mgr.h"
 #include "recovery_manager.h"  // For RecoveryCrashPoint
@@ -15,13 +16,12 @@
 
 class Transaction;
 
-const int BUFFER_SIZE_FOR_TEST = std::thread::hardware_concurrency();
+const size_t BUFFER_SIZE_FOR_TEST = std::thread::hardware_concurrency();
 
 class SmolDB
 {
  public:
-  explicit SmolDB(const std::filesystem::path& db_directory,
-                  size_t buffer_pool_size = 128);
+  explicit SmolDB(const smoldb::DBConfig& config);
   ~SmolDB();
 
   // No copy/move
