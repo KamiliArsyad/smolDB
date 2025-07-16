@@ -5,6 +5,7 @@
 #include <iterator>
 #include <vector>
 
+#include "idx.h"
 #include "access.h"
 #include "executor/lock_mgr.h"
 #include "executor/trx_mgr.h"

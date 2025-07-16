@@ -9,6 +9,7 @@
 
 #include "access.h"
 #include "backend/smoldb.h"
+#include "idx.h"
 #include "mock_heapfile.h"
 
 static Schema make_simple_schema()

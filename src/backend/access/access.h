@@ -1,26 +1,27 @@
-// ===== ../smolDB/src/backend/access/access.h =====
-
 #ifndef ACCESS_H
 #define ACCESS_H
 #include <boost/serialization/access.hpp>
 #include <boost/serialization/binary_object.hpp>
 #include <boost/serialization/unordered_map.hpp>
+#include <boost/serialization/map.hpp>
 #include <boost/serialization/variant.hpp>
 #include <boost/serialization/vector.hpp>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <stdexcept>
 #include <string>
 #include <variant>
 
-#include "../executor/lock_mgr.h"
-#include "../executor/trx_mgr.h"
+#include "../executor/trx_types.h"
 #include "../storage/heapfile.h"
 #include "../storage/storage.h"
 
 class Index;
+class TransactionManager;
+class LockManager;
 
 // ---------------------------------------------------------------------
 // std::chrono <-> Boost.Serialization
@@ -236,28 +237,45 @@ class Row
   }
 };
 
+struct IndexMetadata
+{
+  std::string name;
+  uint8_t key_col;
+
+  template <class Ar>
+  void serialize(Ar& ar, unsigned)
+  {
+    ar & name & key_col;
+  }
+};
+
 struct TableMetadata
 {
   Schema schema;
   PageID first_page_id;
   std::string table_name;
   size_t max_tuple_size;
+  IndexMetadata idx_meta;
 
   // Default constructor for serialization
-  TableMetadata() = default;
+  TableMetadata()
+    : first_page_id(0), max_tuple_size(0), idx_meta{}
+  {
+  }
 
   TableMetadata(Schema s, PageID p, std::string n, size_t mts)
       : schema(std::move(s)),
         first_page_id(p),
         table_name(std::move(n)),
-        max_tuple_size(mts)
+        max_tuple_size(mts),
+        idx_meta{}
   {
   }
 
   template <class Ar>
   void serialize(Ar& ar, unsigned)
   {
-    ar & schema & first_page_id & table_name & max_tuple_size;
+    ar & schema & first_page_id & table_name & max_tuple_size & idx_meta;
   }
 };
 
@@ -272,9 +290,9 @@ class Table
   std::string table_name_;
   Schema schema_;
   std::unique_ptr<HeapFileT> heap_file_;
+  std::unique_ptr<Index> index_ = nullptr;
   LockManager* lock_manager_ = nullptr;        // Not owned
   TransactionManager* txn_manager_ = nullptr;  // Not owned
-  Index* index_ = nullptr;                     // Not owned, can be nullptr
 
   friend class boost::serialization::access;
   template <class Ar>
@@ -286,6 +304,7 @@ class Table
 
  public:
   Table() = default;
+  ~Table();
 
   // For tests to inspect HeapFile properties
   const HeapFileT* get_heap_file() const { return heap_file_.get(); }
@@ -353,9 +372,9 @@ class Table
         table_name_(std::move(table_name)),
         schema_(std::move(schema)),
         heap_file_(std::move(heap_file)),
+        index_(index),
         lock_manager_(lock_mgr),
-        txn_manager_(txn_mgr),
-        index_(index)
+        txn_manager_(txn_mgr)
   {
   }
 
@@ -363,34 +382,7 @@ class Table
   RID insert_row(TransactionID txn_id, const Row& row);
 
   // Get a single row by its RID
-  bool get_row(TransactionID txn_id, RID rid, Row& out_row) const
-  {
-    if (!txn_manager_)
-    {
-      throw std::runtime_error("TransactionManager not available in Table");
-    }
-    Transaction* txn = txn_manager_->get_transaction(txn_id);
-    if (!txn)
-    {
-      throw std::runtime_error("Transaction not active");
-    }
-
-    if (!heap_file_)
-    {
-      throw std::runtime_error("Table not properly initialized");
-    }
-
-    // Acquire lock before reading
-    lock_manager_->acquire_shared(txn, rid);
-
-    std::vector<std::byte> row_bytes;
-    if (!heap_file_->get(txn, rid, row_bytes))
-    {
-      return false;
-    }
-    out_row = Row::from_bytes(row_bytes, schema_);
-    return true;
-  }
+  bool get_row(TransactionID txn_id, RID rid, Row& out_row) const;
 
   // Update a row in the table
   bool update_row(TransactionID txn_id, RID rid, const Row& new_row);
@@ -399,7 +391,7 @@ class Table
   bool delete_row(TransactionID txn_id, RID rid);
 
   // Get all rows (full table scan)
-  std::vector<Row> scan_all() const
+  [[nodiscard]] std::vector<Row> scan_all() const
   {
     if (!heap_file_)
     {
@@ -419,19 +411,22 @@ class Table
     return rows;
   }
 
+  IndexMetadata create_index(const std::string& idx_name, uint8_t col_id);
+
   // Getters
   uint8_t get_table_id() const { return table_id_; }
   const std::string& get_table_name() const { return table_name_; }
   const Schema& get_schema() const { return schema_; }
-  Index* get_index() const { return index_; }
+
+  // ONLY FOR TEST
+  Index* get_index() const;
 };
 
 class Catalog
 {
  private:
-  std::unordered_map<uint8_t, TableMetadata> m_schemas_;
-  std::unordered_map<uint8_t, std::unique_ptr<Index>>
-      indexes_;  // TableId -> Index
+  std::map<uint8_t, TableMetadata> m_schemas_;
+  std::map<uint8_t, IndexMetadata> indexes_;  // TableId -> Index
   std::unordered_map<uint8_t, std::unique_ptr<Table<>>> tables_;
 
   // These are not persisted; they are set at runtime by a DB engine object.
@@ -444,7 +439,7 @@ class Catalog
   template <class Ar>
   void serialize(Ar& ar, unsigned)
   {
-    ar & m_schemas_;
+    ar & m_schemas_ & indexes_;
   }
 
  public:
@@ -468,8 +463,7 @@ class Catalog
 
   // Create an index for a table on a specific column
   void create_index(uint8_t table_id, uint8_t key_column_id,
-                    const std::string& index_name = {});
-  Index* get_index(uint8_t table_id);
+                    const std::string& index_name);
 
   // Get table by ID
   Table<>* get_table(uint8_t table_id);

@@ -88,12 +88,14 @@ void SmolDB::create_table(uint8_t table_id, const std::string& table_name,
                           const Schema& schema, size_t max_tuple_size)
 {
   catalog_->create_table(table_id, table_name, schema, max_tuple_size);
+  catalog_->dump(catalog_file_path_);
 }
 
 void SmolDB::create_index(uint8_t table_id, uint8_t key_column_id,
                           const std::string& index_name)
 {
   catalog_->create_index(table_id, key_column_id, index_name);
+  catalog_->dump(catalog_file_path_);
 }
 
 

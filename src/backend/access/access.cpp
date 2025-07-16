@@ -7,6 +7,7 @@
 #include <fstream>
 #include <sstream>
 
+#include "../executor/trx_mgr.h"
 #include "../index/h_idx.h"
 #include "../index/idx.h"
 #include "../storage/mock_heapfile.h"
@@ -68,6 +69,9 @@ void Table<HeapFileT>::Iterator::find_next()
 }
 
 template <typename HeapFileT>
+Table<HeapFileT>::~Table() = default;
+
+template <typename HeapFileT>
 typename Table<HeapFileT>::Iterator Table<HeapFileT>::begin()
 {
   RID start_rid = {heap_file_->first_page_id(), 0};
@@ -124,7 +128,8 @@ RID Table<HeapFileT>::insert_row(TransactionID txn_id, const Row& row)
     index_->insert_entry(row, new_rid);
 
     // Add the compensating action to the transaction's private undo log.
-    txn->add_index_undo({IndexUndoType::REVERSE_INSERT, index_, row, new_rid});
+    txn->add_index_undo(
+        {IndexUndoType::REVERSE_INSERT, index_.get(), row, new_rid});
   }
 
   return new_rid;
@@ -178,9 +183,9 @@ bool Table<HeapFileT>::update_row(TransactionID txn_id, RID rid,
     {
       // Operation success;
       txn->add_index_undo(
-          {IndexUndoType::REVERSE_DELETE, index_, old_row, rid});
+          {IndexUndoType::REVERSE_DELETE, index_.get(), old_row, rid});
       txn->add_index_undo(
-          {IndexUndoType::REVERSE_INSERT, index_, new_row, rid});
+          {IndexUndoType::REVERSE_INSERT, index_.get(), new_row, rid});
     }
   }
 
@@ -227,10 +232,64 @@ bool Table<HeapFileT>::delete_row(TransactionID txn_id, RID rid)
     index_->delete_entry(old_row);
 
     // Add the compensating action to the transaction's private undo log.
-    txn->add_index_undo({IndexUndoType::REVERSE_DELETE, index_, old_row, rid});
+    txn->add_index_undo(
+        {IndexUndoType::REVERSE_DELETE, index_.get(), old_row, rid});
   }
 
   return heap_file_->delete_row(txn, rid);
+}
+
+template <typename HeapFileT>
+bool Table<HeapFileT>::get_row(TransactionID txn_id, RID rid,
+                               Row& out_row) const
+{
+  if (!txn_manager_)
+  {
+    throw std::runtime_error("TransactionManager not available in Table");
+  }
+  Transaction* txn = txn_manager_->get_transaction(txn_id);
+  if (!txn)
+  {
+    throw std::runtime_error("Transaction not active");
+  }
+
+  if (!heap_file_)
+  {
+    throw std::runtime_error("Table not properly initialized");
+  }
+
+  // Acquire lock before reading
+  lock_manager_->acquire_shared(txn, rid);
+
+  std::vector<std::byte> row_bytes;
+  if (!heap_file_->get(txn, rid, row_bytes))
+  {
+    return false;
+  }
+  out_row = Row::from_bytes(row_bytes, schema_);
+  return true;
+}
+
+template <typename HeapFileT>
+IndexMetadata Table<HeapFileT>::create_index(const std::string& idx_name,
+                                             uint8_t key_col_id)
+{
+  assert(key_col_id < schema_.size() && "Column does not exist");
+
+  index_ = std::make_unique<InMemoryHashIndex>(key_col_id);
+
+  // This code will only be compiled if HeapFileT is the real HeapFile.
+  // It will be completely removed for the MockHeapFile instantiation.
+  if constexpr (std::is_same_v<HeapFileT, HeapFile>) {
+    index_->build(this);
+  }
+
+  return {idx_name, key_col_id};
+}
+template <typename HeapFileT>
+Index* Table<HeapFileT>::get_index() const
+{
+  return index_.get();
 }
 
 // Force instantiation for the default HeapFile type
@@ -382,30 +441,21 @@ void Catalog::create_index(uint8_t table_id, uint8_t key_column_id,
         "Cannot create index for non-existent table ID " +
         std::to_string(table_id));
   }
-  if (indexes_.count(table_id))
+  if (indexes_.contains(table_id))
   {
     throw std::invalid_argument("Index for table ID " +
                                 std::to_string(table_id) + " already exists.");
   }
 
   // For now, we only support one type of index.
-  indexes_[table_id] = std::make_unique<InMemoryHashIndex>(key_column_id);
-}
-
-Index* Catalog::get_index(uint8_t table_id)
-{
-  auto it = indexes_.find(table_id);
-  if (it != indexes_.end())
-  {
-    return it->second.get();
-  }
-  return nullptr;
+  indexes_[table_id] =
+      tables_[table_id]->create_index(index_name, key_column_id);
 }
 
 void Catalog::build_all_indexes()
 {
-  for (auto const& [table_id, index] : indexes_)
+  for (auto& [table_id, meta] : indexes_)
   {
-    index->build(get_table(table_id));
+    get_table(table_id)->create_index(meta.name, meta.key_col);
   }
 }

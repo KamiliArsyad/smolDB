@@ -61,7 +61,7 @@ class Index
    * This is a non-transactional, system-level operation.
    * @param source_table The table to build the index from.
    */
-  virtual void build(Table<HeapFile>* source_table) = 0;
+  virtual void build(Table<>* source_table) = 0;
 };
 
 #endif  // SMOLDB_IDX_H

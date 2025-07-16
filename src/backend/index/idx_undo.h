@@ -1,9 +1,9 @@
 #ifndef SMOLDB_IDX_UNDO_H
 #define SMOLDB_IDX_UNDO_H
 
+#include "../access/access.h"
 #include "../storage/heapfile.h"
 
-class Row;
 class Index;
 
 enum class IndexUndoType
@@ -16,7 +16,7 @@ struct IndexUndoAction
 {
   const IndexUndoType type;
   Index* index;  // Pointer to the index that was modified.
-  const Row& row;
+  const Row row;
   const RID rid;  // Required for re-inserting on a delete-abort.
 };
 
