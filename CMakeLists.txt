@@ -14,6 +14,7 @@ if(ENABLE_TSAN)
 endif()
 
 add_subdirectory(src)
-add_subdirectory(tests/unit)
 
 enable_testing()
+add_subdirectory(tests/unit)
+add_subdirectory(tests/integration)

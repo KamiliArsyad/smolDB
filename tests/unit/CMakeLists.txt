@@ -13,18 +13,16 @@ file(GLOB UNIT_SRCS
 )
 
 # Add our temporary options file to the list of sources for the executable
-add_executable(Google_Tests_run ${UNIT_SRCS} ${CMAKE_CURRENT_BINARY_DIR}/tsan_options.cpp)
+add_executable(smoldb_unit_tests_run ${UNIT_SRCS} ${CMAKE_CURRENT_BINARY_DIR}/tsan_options.cpp)
 
-target_include_directories(Google_Tests_run
+target_include_directories(smoldb_unit_tests_run
         PRIVATE
         ${CMAKE_SOURCE_DIR}/src/
 )
 
-target_link_libraries(Google_Tests_run gtest gtest_main backend_lib storage_lib access_lib executor_lib idx_lib)
+target_link_libraries(smoldb_unit_tests_run gtest gtest_main backend_lib storage_lib access_lib executor_lib idx_lib)
 
-enable_testing()
-
-if (ENABLE_TSAN) # Check the TSan option from your root CMakeLists.txt
+if (ENABLE_TSAN)
     message(STATUS "TSan is enabled, configuring ASLR wrapper for tests.")
 
     # Find the setarch utility.
@@ -45,14 +43,12 @@ if (ENABLE_TSAN) # Check the TSan option from your root CMakeLists.txt
         # The $<TARGET_FILE:...> is a CMake "generator expression" that correctly
         # resolves to the full path of the executable, fixing the "No such file" error.
         add_test(
-                NAME smoldb_unit_tests
-                COMMAND ${ASLR_WRAPPER} $<TARGET_FILE:Google_Tests_run>
+                NAME smoldb_unit_tests_run
+                COMMAND ${ASLR_WRAPPER} $<TARGET_FILE:smoldb_unit_tests_run>
         )
     else ()
-        # If not on Linux or setarch isn't found, add the test without the wrapper.
-        add_test(NAME smoldb_unit_tests COMMAND Google_Tests_run)
+        add_test(NAME smoldb_unit_tests_run COMMAND smoldb_unit_tests)
     endif ()
 else ()
-    # If TSan is NOT enabled, just add the test normally.
-    add_test(NAME smoldb_unit_tests COMMAND Google_Tests_run)
+    add_test(NAME smoldb_unit_tests_run COMMAND smoldb_unit_tests)
 endif ()
