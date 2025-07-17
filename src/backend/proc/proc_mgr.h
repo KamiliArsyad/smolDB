@@ -41,7 +41,8 @@ class ProcedureManager
    * @return The value returned by the procedure.
    */
   Value execute_procedure(const std::string& proc_name,
-                          const ProcedureParams& params);
+                          const ProcedureParams& params,
+                          const ProcedureOptions& options = {});
 
  private:
   TransactionManager* txn_manager_;

@@ -1,5 +1,6 @@
 #include "proc_mgr.h"
 
+#include "../executor/lock_excepts.h"
 #include "../executor/trx_mgr.h"
 #include "proc_ctx.h"
 
@@ -22,9 +23,9 @@ void ProcedureManager::register_procedure(
   }
   procedures_[name] = std::move(proc);
 }
-
 Value ProcedureManager::execute_procedure(const std::string& proc_name,
-                                          const ProcedureParams& params)
+                                          const ProcedureParams& params,
+                                          const ProcedureOptions& options)
 {
   auto it = procedures_.find(proc_name);
   if (it == procedures_.end())
@@ -33,36 +34,49 @@ Value ProcedureManager::execute_procedure(const std::string& proc_name,
   }
   TransactionProcedure* proc = it->second.get();
 
-  TransactionID txn_id = txn_manager_->begin();
-  Value result;
-  bool should_abort = false;
-
-  try
+  int attempts = options.max_retries + 1;
+  int retry_count = 0;
+  while (true)
   {
-    Transaction* txn = txn_manager_->get_transaction(txn_id);
-    TransactionContext ctx(txn, catalog_);
-    ProcedureStatus status = proc->execute(ctx, params, result);
-    if (status == ProcedureStatus::ABORT)
+    TransactionID txn_id = txn_manager_->begin();
+    Value result;
+    bool should_abort_logically = false;
+
+    try
     {
-      should_abort = true;
+      Transaction* txn = txn_manager_->get_transaction(txn_id);
+      TransactionContext ctx(txn, catalog_);
+      ProcedureStatus status = proc->execute(ctx, params, result);
+      if (status == ProcedureStatus::ABORT)
+      {
+        should_abort_logically = true;
+      }
     }
-  }
-  catch (...)
-  {
-    // If the procedure throws any exception, we must abort and re-throw.
-    txn_manager_->abort(txn_id);
-    throw;
-  }
+    catch (const TransactionAbortedException& e)
+    {
+      // Catch all retryable exceptions
+      txn_manager_->abort(txn_id);
+      if (++retry_count >= attempts) throw;  // Out of retries
+      std::this_thread::sleep_for(options.backoff_fn(retry_count));
+      continue;  // Go to next loop iteration to retry
+    }
+    catch (...)
+    {
+      // Non-retryable error
+      txn_manager_->abort(txn_id);
+      throw;
+    }
 
-  // Commit or abort based on the procedure's returned status.
-  if (should_abort)
-  {
-    txn_manager_->abort(txn_id);
+    // If we get here, the procedure executed without a system error.
+    // Honor the logical outcome.
+    if (should_abort_logically)
+    {
+      txn_manager_->abort(txn_id);
+    }
+    else
+    {
+      txn_manager_->commit(txn_id);
+    }
+    return result;  // Success, exit the loop.
   }
-  else
-  {
-    txn_manager_->commit(txn_id);
-  }
-
-  return result;
 }

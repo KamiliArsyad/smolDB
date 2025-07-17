@@ -24,6 +24,29 @@ enum class ProcedureStatus
   ABORT
 };
 
+namespace smoldb
+{
+namespace backoff
+{
+inline std::chrono::milliseconds constant(int retry_count)
+{
+  return std::chrono::milliseconds(2);
+}
+inline std::chrono::milliseconds linear(int retry_count)
+{
+  return std::chrono::milliseconds(retry_count * 2);
+}
+// Add exponential, etc. later if needed.
+}  // namespace backoff
+}  // namespace smoldb
+
+struct ProcedureOptions
+{
+  int max_retries = 0;
+  std::function<std::chrono::milliseconds(int)> backoff_fn =
+      smoldb::backoff::constant;
+};
+
 /**
  * @brief The pure virtual base class for all custom transaction logic.
  *
