@@ -15,6 +15,11 @@ class TransactionContext;
 using ProcedureParams = std::map<std::string, Value>;
 
 /**
+ * @brief A type-safe map to store procedure result.
+ */
+using ProcedureResult = std::map<std::string, Value>;
+
+/**
  * @brief Defines the desired outcome of a procedure's execution.
  * The ProcedureManager will honor this status to either commit or abort.
  */
@@ -75,7 +80,7 @@ class TransactionProcedure
    */
   virtual ProcedureStatus execute(TransactionContext& ctx,
                                   const ProcedureParams& params,
-                                  Value& result) = 0;
+                                  ProcedureResult& result) = 0;
 };
 
 #endif  // SMOLDB_PROC_H

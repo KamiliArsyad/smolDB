@@ -23,7 +23,8 @@ void ProcedureManager::register_procedure(
   }
   procedures_[name] = std::move(proc);
 }
-Value ProcedureManager::execute_procedure(const std::string& proc_name,
+
+ProcedureResult ProcedureManager::execute_procedure(const std::string& proc_name,
                                           const ProcedureParams& params,
                                           const ProcedureOptions& options)
 {
@@ -39,7 +40,7 @@ Value ProcedureManager::execute_procedure(const std::string& proc_name,
   while (true)
   {
     TransactionID txn_id = txn_manager_->begin();
-    Value result;
+    std::map<std::string, Value> result;
     bool should_abort_logically = false;
 
     try

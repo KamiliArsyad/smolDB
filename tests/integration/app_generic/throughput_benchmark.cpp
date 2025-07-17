@@ -19,7 +19,7 @@ class TransferPointsProcedureForBench : public TransactionProcedure
  public:
   std::string get_name() const override { return "transfer_points"; }
   ProcedureStatus execute(TransactionContext& ctx,
-                          const ProcedureParams& params, Value& result) override
+                          const ProcedureParams& params, ProcedureResult& result) override
   {
     const auto from_id = boost::get<int32_t>(params.at("from_user"));
     const auto to_id = boost::get<int32_t>(params.at("to_user"));

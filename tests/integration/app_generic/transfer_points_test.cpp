@@ -15,7 +15,7 @@ class TransferPointsProcedure : public TransactionProcedure
   std::string get_name() const override { return "transfer_points"; }
 
   ProcedureStatus execute(TransactionContext& ctx,
-                          const ProcedureParams& params, Value& result) override
+                          const ProcedureParams& params, ProcedureResult& result) override
   {
     // 1. Parameter Validation
     if (!params.count("from_user") || !params.count("to_user") ||
@@ -50,7 +50,7 @@ class TransferPointsProcedure : public TransactionProcedure
     int32_t from_balance = boost::get<int32_t>(from_row.get_value("points"));
     if (from_balance < amount)
     {
-      result = "Insufficient points";
+      result["message"] = "Insufficient points";
       return ProcedureStatus::ABORT;
     }
 
@@ -62,7 +62,7 @@ class TransferPointsProcedure : public TransactionProcedure
     table->update_row(ctx.get_txn_id(), to_rid, to_row);
 
     // 5. Return Success
-    result = "Transfer successful";
+    result["message"] = "Transfer successful";
     return ProcedureStatus::SUCCESS;
   }
 };
