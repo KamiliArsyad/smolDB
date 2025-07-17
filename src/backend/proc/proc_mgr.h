@@ -38,6 +38,7 @@ class ProcedureManager
    *
    * @param proc_name The name of the procedure to execute.
    * @param params The parameters to pass to the procedure.
+   * @param options User-configurable option e.g., for handling failures.
    * @return The value returned by the procedure.
    */
   Value execute_procedure(const std::string& proc_name,

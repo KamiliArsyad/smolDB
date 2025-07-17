@@ -17,6 +17,7 @@ set(INTEGRATION_SRCS
         test_access.cpp
         transaction_test.cpp
         app_generic/transfer_points_test.cpp
+        app_generic/throughput_benchmark.cpp
 )
 
 # Use a distinct name for the executable target.
