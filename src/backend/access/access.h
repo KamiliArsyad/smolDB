@@ -2,8 +2,8 @@
 #define ACCESS_H
 #include <boost/serialization/access.hpp>
 #include <boost/serialization/binary_object.hpp>
-#include <boost/serialization/unordered_map.hpp>
 #include <boost/serialization/map.hpp>
+#include <boost/serialization/unordered_map.hpp>
 #include <boost/serialization/variant.hpp>
 #include <boost/serialization/vector.hpp>
 #include <chrono>
@@ -258,10 +258,7 @@ struct TableMetadata
   IndexMetadata idx_meta;
 
   // Default constructor for serialization
-  TableMetadata()
-    : first_page_id(0), max_tuple_size(0), idx_meta{}
-  {
-  }
+  TableMetadata() : first_page_id(0), max_tuple_size(0), idx_meta{} {}
 
   TableMetadata(Schema s, PageID p, std::string n, size_t mts)
       : schema(std::move(s)),
@@ -389,6 +386,19 @@ class Table
 
   // Delete a row from the table
   bool delete_row(TransactionID txn_id, RID rid);
+
+  /**
+   * @brief Finds the RID for a given index key.
+   *
+   * This provides a transactional way to use the table's index for lookups.
+   *
+   * @param txn_id The current transaction ID.
+   * @param key The key to look up in the table's primary index.
+   * @param out_rid The RID is written to this parameter if found.
+   * @return true if the key was found, false otherwise.
+   */
+  bool get_rid_from_index(TransactionID txn_id, const Value& key,
+                          RID& out_rid) const;
 
   // Get all rows (full table scan)
   [[nodiscard]] std::vector<Row> scan_all() const

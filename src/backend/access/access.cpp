@@ -240,6 +240,22 @@ bool Table<HeapFileT>::delete_row(TransactionID txn_id, RID rid)
 }
 
 template <typename HeapFileT>
+bool Table<HeapFileT>::get_rid_from_index(TransactionID txn_id,
+                                          const Value& key, RID& out_rid) const
+{
+  if (!index_)
+  {
+    return false;
+  }
+  // TODO: Validate correctness;
+  // The index is responsible for its own concurrency control (e.g., shared
+  // lock on its internal map). From the transaction's perspective, this is a
+  // read operation. The lock on the actual RID will be acquired later when the
+  // caller uses this RID to call get_row or update_row.
+  return index_->get(key, out_rid);
+}
+
+template <typename HeapFileT>
 bool Table<HeapFileT>::get_row(TransactionID txn_id, RID rid,
                                Row& out_row) const
 {
@@ -280,7 +296,8 @@ IndexMetadata Table<HeapFileT>::create_index(const std::string& idx_name,
 
   // This code will only be compiled if HeapFileT is the real HeapFile.
   // It will be completely removed for the MockHeapFile instantiation.
-  if constexpr (std::is_same_v<HeapFileT, HeapFile>) {
+  if constexpr (std::is_same_v<HeapFileT, HeapFile>)
+  {
     index_->build(this);
   }
 
