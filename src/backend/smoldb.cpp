@@ -27,6 +27,8 @@ SmolDB::SmolDB(const smoldb::DBConfig& config)
   txn_manager_ = std::make_unique<TransactionManager>(
       lock_manager_.get(), wal_mgr_.get(), buffer_pool_.get());
   catalog_ = std::make_unique<Catalog>();
+  proc_manager_ =
+      std::make_unique<ProcedureManager>(txn_manager_.get(), catalog_.get());
 }
 
 SmolDB::~SmolDB()

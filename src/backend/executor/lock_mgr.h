@@ -90,6 +90,10 @@ class LockManager
     int sharing_count = 0;
     // Is an exclusive lock held?
     bool is_exclusive = false;
+
+    // True if a transaction is waiting to upgrade its S lock to an X lock.
+    // Only one transaction can be in this state at a time to prevent deadlocks.
+    bool is_upgrading = false;
   };
 
   std::vector<Shard> shards_;
