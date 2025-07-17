@@ -2,6 +2,8 @@
 
 #include <cassert>
 
+#include "lock_excepts.h"
+
 LockManager::LockManager()
     : shard_count_(std::thread::hardware_concurrency()),
       lock_timeout_(100)  // 100ms timeout for deadlock prevention
@@ -17,9 +19,7 @@ LockManager::Shard& LockManager::get_shard(const RID& rid)
 bool LockManager::acquire_shared(Transaction* txn, const RID& rid)
 {
   Shard& shard = get_shard(rid);
-  std::unique_lock<std::mutex> lock(shard.mutex);
-
-  // Get or create the request queue for this RID
+  std::unique_lock lock(shard.mutex);
   auto& queue = shard.lock_table[rid];
 
   for (const auto& req : queue.requests)
@@ -30,19 +30,19 @@ bool LockManager::acquire_shared(Transaction* txn, const RID& rid)
     }
   }
 
-  // Add our request to the end of the queue
   queue.requests.emplace_back(LockRequest{txn->get_id(), LockMode::SHARED});
   auto it = std::prev(queue.requests.end());
 
   auto can_grant_shared = [&]()
   {
-    // Grant if no exclusive lock is held and no exclusive requests are waiting
-    // ahead of us. This prevents starving writers.
-    if (queue.is_exclusive || queue.is_upgrading) return false;
+    // Cannot grant a new S lock if an upgrade or exclusive lock is pending.
     for (auto const& req : queue.requests)
     {
-      if (req.txn_id == txn->get_id()) return true;       // We are at the front
-      if (req.mode == LockMode::EXCLUSIVE) return false;  // Writer is waiting
+      if (req.txn_id != txn->get_id() &&
+          (req.mode == LockMode::EXCLUSIVE || req.mode == LockMode::UPGRADE))
+      {
+        return false;
+      }
     }
     return true;
   };
@@ -52,7 +52,7 @@ bool LockManager::acquire_shared(Transaction* txn, const RID& rid)
     if (queue.cv.wait_for(lock, lock_timeout_) == std::cv_status::timeout)
     {
       queue.requests.erase(it);
-      return false;  // Deadlock timeout
+      throw LockTimeoutException();
     }
   }
 
@@ -65,88 +65,105 @@ bool LockManager::acquire_shared(Transaction* txn, const RID& rid)
 bool LockManager::acquire_exclusive(Transaction* txn, const RID& rid)
 {
   Shard& shard = get_shard(rid);
-  std::unique_lock<std::mutex> lock(shard.mutex);
+  std::unique_lock lock(shard.mutex);
 
   auto& queue = shard.lock_table[rid];
 
-  bool is_upgrade = false;
-  for (auto& req : queue.requests)
+  // Find if a request for this transaction already exists.
+  auto it = queue.requests.end();
+  for (auto req_it = queue.requests.begin(); req_it != queue.requests.end();
+       ++req_it)
   {
-    if (req.txn_id == txn->get_id() && req.granted)
+    if (req_it->txn_id == txn->get_id())
     {
-      if (req.mode == LockMode::EXCLUSIVE) return true;  // Idempotent
-      if (req.mode == LockMode::SHARED)
-      {
-        is_upgrade = true;
-        break;
-      }
+      it = req_it;
+      break;
     }
   }
 
-  if (is_upgrade)
+  // Handle existing requests (idempotency and upgrades).
+  if (it != queue.requests.end())
   {
-    // A transaction is requesting an upgrade.
-    // To prevent deadlock, only one transaction can be waiting for an upgrade.
-    if (queue.is_upgrading)
+    if (it->mode == LockMode::EXCLUSIVE)
     {
-      // Another transaction is already waiting to upgrade.
-      // We must abort this transaction to prevent deadlock.
-      return false;
+      return true;  // Already holds X lock.
     }
+    // This is an upgrade request. Change mode to UPGRADE.
+    it->mode = LockMode::UPGRADE;
+  }
+  else
+  {
+    // No existing request, add a new one.
+    queue.requests.emplace_back(
+        LockRequest{txn->get_id(), LockMode::EXCLUSIVE});
+    it = std::prev(queue.requests.end());
+  }
 
-    queue.is_upgrading = true;
-
-    // Wait until this transaction is the *only* holder of a shared lock.
-    while (queue.sharing_count > 1)
+  // Unified wait loop.
+  while (true)
+  {
+    // Check grant conditions.
+    if (it->mode == LockMode::UPGRADE)
     {
-      if (queue.cv.wait_for(lock, lock_timeout_) == std::cv_status::timeout)
+      // Grant upgrade if this txn is the only one with a shared lock.
+      if (queue.sharing_count == 1 &&
+          it->granted)  // Must have been granted S lock
       {
-        queue.is_upgrading = false;  // Clean up state
-        queue.cv.notify_all();
-        return false;
-      }
-    }
-
-    // At this point, we are the only shared lock holder. Grant the upgrade.
-    for (auto& req : queue.requests)
-    {
-      if (req.txn_id == txn->get_id())
-      {
-        req.mode = LockMode::EXCLUSIVE;
         break;
       }
     }
-    queue.sharing_count--;  // From 1 to 0
-    queue.is_exclusive = true;
-    queue.is_upgrading = false;
-    // No change to txn->held_locks_, as the RID is already tracked.
-    queue.cv.notify_all();  // Wake others who might now be able to proceed
-    return true;
-  }
+    else if (it->mode == LockMode::EXCLUSIVE)
+    {
+      // Grant new exclusive lock if no other locks are held and it's our turn.
+      if (queue.sharing_count == 0 && !queue.is_exclusive &&
+          queue.requests.front().txn_id == txn->get_id())
+      {
+        break;
+      }
+    }
 
-  queue.requests.emplace_back(LockRequest{txn->get_id(), LockMode::EXCLUSIVE});
-  auto it = std::prev(queue.requests.end());
+    // Deadlock prevention: only one upgrader allowed.
+    if (it->mode == LockMode::UPGRADE)
+    {
+      for (const auto& other_req : queue.requests)
+      {
+        if (other_req.txn_id != it->txn_id &&
+            other_req.mode == LockMode::UPGRADE)
+        {
+          it->mode = LockMode::SHARED;  // Revert before throwing
+          throw DeadlockException();
+        }
+      }
+    }
 
-  auto can_grant_exclusive = [&]()
-  {
-    // Grant if we are the only one requesting (or at the front) and no other
-    // locks are held
-    return !queue.is_exclusive && queue.sharing_count == 0 &&
-           queue.requests.front().txn_id == txn->get_id();
-  };
-
-  while (!can_grant_exclusive())
-  {
+    // Wait or timeout.
     if (queue.cv.wait_for(lock, lock_timeout_) == std::cv_status::timeout)
     {
-      queue.requests.erase(it);
-      return false;  // Deadlock timeout
+      if (it->mode == LockMode::UPGRADE)
+        it->mode = LockMode::SHARED;
+      else
+        queue.requests.erase(it);
+      throw LockTimeoutException();
     }
   }
 
+  // --- Grant the lock ---
+  bool was_upgrade = (it->mode == LockMode::UPGRADE);
+
+  if (was_upgrade)
+  {
+    queue.sharing_count--;  // From 1 to 0
+  }
+
+  it->mode = LockMode::EXCLUSIVE;
   it->granted = true;
   queue.is_exclusive = true;
-  txn->add_held_lock(rid);
+
+  if (!was_upgrade)  // Only add to held set if it was a new lock.
+  {
+    txn->add_held_lock(rid);
+  }
+
   return true;
 }
 
