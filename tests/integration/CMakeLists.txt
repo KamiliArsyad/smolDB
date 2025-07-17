@@ -16,6 +16,7 @@ set(INTEGRATION_SRCS
         table_iterator_test.cpp
         test_access.cpp
         transaction_test.cpp
+        app_generic/transfer_points_test.cpp
 )
 
 # Use a distinct name for the executable target.
