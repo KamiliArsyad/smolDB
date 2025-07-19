@@ -13,6 +13,9 @@ if(ENABLE_TSAN)
     add_link_options(-fsanitize=thread)
 endif()
 
+find_package(gRPC REQUIRED)
+find_package(Protobuf REQUIRED)
+
 add_subdirectory(src)
 
 enable_testing()

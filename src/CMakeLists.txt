@@ -1,1 +1,2 @@
+add_subdirectory(protos)
 add_subdirectory(backend)

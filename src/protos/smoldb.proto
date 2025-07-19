@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+// We'll need this for mapping datetime <-> time_point
+import "google/protobuf/timestamp.proto";
+
+package smoldb;
+
+// The generic service for interacting with the SmolDB engine.
+service SmolDBService {
+  // Executes a registered transaction procedure by name.
+  // This is the sole entry point for all database modifications and queries.
+  rpc ExecuteProcedure(ExecuteProcedureRequest) returns (ExecuteProcedureResponse);
+}
+
+// A message representing a dynamic value, mirroring the C++ boost::variant.
+message Value {
+  oneof value_oneof {
+    int32 int_value = 1;
+    float float_value = 2;
+    string string_value = 3;
+    google.protobuf.Timestamp timestamp_value = 4;
+  }
+}
+
+// The request to execute a procedure.
+message ExecuteProcedureRequest {
+  // The registered name of the procedure to execute (e.g., "transfer_points").
+  string procedure_name = 1;
+
+  // A map of named parameters to pass to the procedure.
+  map<string, Value> params = 2;
+}
+
+// The response from a procedure execution.
+message ExecuteProcedureResponse {
+  // A status code reflecting the outcome of the procedure.
+  enum Status {
+    UNSPECIFIED = 0;
+    SUCCESS = 1;   // The transaction was committed.
+    ABORT = 2;     // The transaction was aborted due to business logic.
+  }
+
+  Status status = 1;
+
+  // A map of named result values from the procedure.
+  // For an ABORT status, this might contain a "reason" key.
+  // For a SUCCESS status, it contains the procedure's output.
+  map<string, Value> results = 2;
+}
