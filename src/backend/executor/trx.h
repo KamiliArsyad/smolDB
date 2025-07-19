@@ -58,6 +58,34 @@ class Transaction
     return index_undo_log_;
   }
 
+  /**
+   * @brief Tries to get previously read row by this trx.
+   * @param rid {in} The RID of the row.
+   * @param row {out} The output row. Left as is if row was not cached.
+   * @return true iff the row exists and was cached.
+   */
+  bool get_cached_row(const RID rid, Row &row)
+  {
+    if (!read_cache_.contains(rid)) return false;
+    row = read_cache_[rid];
+    return true;
+  }
+
+  /**
+   * @brief Caches a row read by this transaction.
+   * @param rid The RID of the row to be cached.
+   * @param row The row to be cached.
+   */
+  void cache_row(const RID rid, const Row &row)
+  {
+    read_cache_[rid] = row;
+  }
+
+  void remove_cache(const RID rid)
+  {
+    read_cache_.erase(rid);
+  }
+
   // Setters (should be called with the transaction's mutex held)
   void set_state(TransactionState state) { state_ = state; }
   void set_prev_lsn(LSN prev_lsn) { prev_lsn_ = prev_lsn; }
@@ -82,6 +110,15 @@ class Transaction
 
   // A list of modifications made to in-memory indexes by this transaction.
   std::vector<IndexUndoAction> index_undo_log_;
+
+  /**
+   * @brief Optimization to read by caching the read row.
+   * @remarks Once a row is read by a trx T, its state can only be changed by T
+   * for as long as T has not committed. This means that subsequent reads can
+   * continue to see this as long as we take care of update to the same row by
+   * T <- THIS IS IMPORTANT.
+   */
+  std::unordered_map<RID, Row> read_cache_;
 
   // Mutex to protect modifications to the transaction's state (e.g., prev_lsn)
   std::mutex mutex_;

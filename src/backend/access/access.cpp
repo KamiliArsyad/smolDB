@@ -134,6 +134,7 @@ RID Table<HeapFileT>::insert_row(TransactionID txn_id, const Row& row)
         {IndexUndoType::REVERSE_INSERT, index_.get(), row, new_rid});
   }
 
+  txn->cache_row(new_rid, row);
   return new_rid;
 }
 
@@ -162,6 +163,8 @@ bool Table<HeapFileT>::update_row(TransactionID txn_id, RID rid,
     throw std::invalid_argument("Row schema doesn't match table schema");
   }
 
+  auto row_bytes = new_row.to_bytes();
+
   // Acquire exclusive lock before any modification
   if (!lock_manager_->acquire_exclusive(txn, rid))
   {
@@ -174,12 +177,17 @@ bool Table<HeapFileT>::update_row(TransactionID txn_id, RID rid,
   {
     // To handle a key update, we need both the old key and the new key.
     // Fetch the row state as it exists *before* this update.
+    Row old_row;
     std::vector<std::byte> old_bytes;
-    if (!heap_file_->get(txn, rid, old_bytes))
+
+    if (!txn->get_cached_row(rid, old_row))
     {
-      return false;  // Row doesn't exist or is a tombstone.
+      if (!heap_file_->get(txn, rid, old_bytes))
+      {
+        return false;  // Row doesn't exist or is a tombstone.
+      }
+      old_row = Row::from_bytes(old_bytes, schema_);
     }
-    Row old_row = Row::from_bytes(old_bytes, schema_);
 
     if (index_->update_entry(old_row, new_row, rid))
     {
@@ -191,7 +199,7 @@ bool Table<HeapFileT>::update_row(TransactionID txn_id, RID rid,
     }
   }
 
-  auto row_bytes = new_row.to_bytes();
+  txn->cache_row(rid, new_row);
   return heap_file_->update(txn, rid, row_bytes);
 }
 
@@ -212,6 +220,8 @@ bool Table<HeapFileT>::delete_row(TransactionID txn_id, RID rid)
   {
     throw std::runtime_error("Table not properly initialized");
   }
+
+  txn->remove_cache(rid);
 
   // Acquire exclusive lock before any modification
   if (!lock_manager_->acquire_exclusive(txn, rid))
@@ -276,6 +286,9 @@ bool Table<HeapFileT>::get_row(TransactionID txn_id, RID rid,
     throw std::runtime_error("Table not properly initialized");
   }
 
+  // If a row was previously read, this txn definitely still have the lock.
+  if (txn->get_cached_row(rid, out_row)) return true;
+
   // Acquire lock before reading
   lock_manager_->acquire_shared(txn, rid);
 
@@ -285,6 +298,7 @@ bool Table<HeapFileT>::get_row(TransactionID txn_id, RID rid,
     return false;
   }
   out_row = Row::from_bytes(row_bytes, schema_);
+  txn->cache_row(rid, out_row);
   return true;
 }
 
