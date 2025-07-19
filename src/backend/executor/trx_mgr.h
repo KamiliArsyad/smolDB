@@ -11,6 +11,9 @@
 #include "lock_mgr.h"
 #include "trx.h"
 
+namespace smoldb
+{
+
 /**
  * @brief Manages the lifecycle of transactions.
  * This is the main entry point for starting, committing, and aborting txns.
@@ -57,5 +60,7 @@ class TransactionManager
   std::mutex active_txns_mutex_;
   std::unordered_map<TransactionID, std::unique_ptr<Transaction>> active_txns_;
 };
+
+}  // namespace smoldb
 
 #endif  // TRANSACTION_MANAGER_H

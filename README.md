@@ -63,11 +63,12 @@ SmolDB is built with CMake and requires a C++20 compliant compiler (g++ 13+ reco
 *   g++ (13+) or another C++20 compiler
 *   Boost (Serialization, Variant)
 *   GoogleTest (for running tests)
+*   libgrpc for c++ and Protobuf Compiler (for gRPC)
 
 **On Debian/Ubuntu:**
 ```bash
 sudo apt-get update
-sudo apt-get install build-essential cmake libboost-all-dev libgtest-dev
+sudo apt-get install build-essential cmake libboost-all-dev libgtest-dev libgrpc++-dev protobuf-compiler-grpc
 ```
 
 ### Build Steps

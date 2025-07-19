@@ -2,6 +2,8 @@
 
 #include "backend/smoldb.h"
 
+using namespace smoldb;
+
 // A test fixture that is parameterized by the crash point.
 class AriesCrashRecoveryTest
     : public ::testing::Test,

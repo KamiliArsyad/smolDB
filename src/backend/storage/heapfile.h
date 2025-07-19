@@ -10,6 +10,9 @@
 #include "bfrpl.h"  // BufferPool, PageGuard
 #include "storage.h"
 
+namespace smoldb
+{
+
 class Transaction;  // Forward declaration
 class WAL_mgr;      // Forward declaration
 
@@ -99,13 +102,14 @@ class HeapFile
   const std::byte *get_slot_ptr(const Page &page, uint16_t slot_idx) const;
 
   // Helpers to read/write the size prefix in a slot
-  bool is_deleted(const std::byte* slot_ptr) const;
-  uint32_t get_real_length(const std::byte* slot_ptr) const;
-  void set_tuple_metadata(std::byte* slot_ptr, uint32_t size, bool is_deleted);
+  bool is_deleted(const std::byte *slot_ptr) const;
+  uint32_t get_real_length(const std::byte *slot_ptr) const;
+  void set_tuple_metadata(std::byte *slot_ptr, uint32_t size, bool is_deleted);
 
   // Helper to get a pointer to the tuple data within a slot
   const std::byte *get_tuple_data_ptr(const std::byte *slot_ptr) const;
   std::byte *get_tuple_data_ptr(std::byte *slot_ptr);
 };
 
+}  // namespace smoldb
 #endif  // HEAPFILE_H

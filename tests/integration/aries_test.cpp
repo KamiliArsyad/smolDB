@@ -2,6 +2,8 @@
 
 #include "backend/smoldb.h"
 
+using namespace smoldb;
+
 // Helper to inspect the WAL file for debugging purposes.
 static void inspect_wal(const std::filesystem::path& wal_path)
 {

@@ -4,6 +4,8 @@
 #include "../executor/trx_mgr.h"
 #include "proc_ctx.h"
 
+using namespace smoldb;
+
 ProcedureManager::ProcedureManager(TransactionManager* txn_manager,
                                    Catalog* catalog)
     : txn_manager_(txn_manager), catalog_(catalog)

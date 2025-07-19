@@ -19,10 +19,6 @@
 #include "../storage/heapfile.h"
 #include "../storage/storage.h"
 
-class Index;
-class TransactionManager;
-class LockManager;
-
 // ---------------------------------------------------------------------
 // std::chrono <-> Boost.Serialization
 // ---------------------------------------------------------------------
@@ -84,6 +80,13 @@ inline void serialize(Ar& ar, std::chrono::time_point<Clock, Duration>& tp,
 }
 
 }  // namespace boost::serialization
+
+namespace smoldb
+{
+
+class Index;
+class TransactionManager;
+class LockManager;
 
 enum class Col_type
 {
@@ -495,5 +498,6 @@ class Catalog
    */
   void build_all_indexes();
 };
+}  // namespace smoldb
 
 #endif  // ACCESS_H

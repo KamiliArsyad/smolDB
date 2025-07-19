@@ -2,6 +2,8 @@
 
 #include <mutex>
 
+using namespace smoldb;
+
 InMemoryHashIndex::InMemoryHashIndex(uint8_t key_column_id)
     : key_column_id_(key_column_id)
 {

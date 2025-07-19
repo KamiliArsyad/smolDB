@@ -14,6 +14,9 @@
 
 #include "storage.h"
 
+namespace smoldb
+{
+
 class BufferPool;
 
 /* --------- WAL-related ---------------*/
@@ -159,4 +162,5 @@ class WAL_mgr
   std::atomic<bool> stop_writer_ = false;
 };
 
+}  // namespace smoldb
 #endif  // WAL_MGR_H

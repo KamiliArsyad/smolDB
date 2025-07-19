@@ -5,24 +5,27 @@
 #include <mutex>
 #include <unordered_set>
 
-#include "trx_types.h"
-
 #include "../index/idx_undo.h"
 #include "../storage/heapfile.h"  // For RID
 #include "../storage/storage.h"   // For LSN
+#include "trx_types.h"
 
 // Hash function for RID to be used in unordered_set
 namespace std
 {
 template <>
-struct hash<RID>
+struct hash<smoldb::RID>
 {
-  size_t operator()(const RID& rid) const
+  size_t operator()(const smoldb::RID& rid) const
   {
-    return hash<PageID>()(rid.page_id) ^ (hash<uint16_t>()(rid.slot) << 1);
+    return hash<smoldb::PageID>()(rid.page_id) ^
+           (hash<uint16_t>()(rid.slot) << 1);
   }
 };
 }  // namespace std
+
+namespace smoldb
+{
 
 enum class TransactionState
 {
@@ -50,7 +53,10 @@ class Transaction
   TransactionState get_state() const { return state_; }
   LSN get_prev_lsn() const { return prev_lsn_; }
   const std::unordered_set<RID>& get_held_locks() const { return held_locks_; }
-  const std::vector<IndexUndoAction>& get_index_undo_log() const { return index_undo_log_; }
+  const std::vector<IndexUndoAction>& get_index_undo_log() const
+  {
+    return index_undo_log_;
+  }
 
   // Setters (should be called with the transaction's mutex held)
   void set_state(TransactionState state) { state_ = state; }
@@ -81,4 +87,5 @@ class Transaction
   std::mutex mutex_;
 };
 
+}  // namespace smoldb
 #endif  // TRANSACTION_H

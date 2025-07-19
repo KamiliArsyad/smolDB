@@ -6,6 +6,8 @@
 #include "../executor/trx.h"
 #include "wal_mgr.h"
 
+using namespace smoldb;
+
 // Each slot stores: [ 4-byte tuple length | tuple data ... ]
 constexpr size_t TUPLE_LENGTH_PREFIX_SIZE = sizeof(uint32_t);
 

@@ -5,6 +5,9 @@
 #include "../executor/trx.h"
 #include "../storage/heapfile.h"
 
+namespace smoldb
+{
+
 class Row;
 class HeapFile;
 struct RID;
@@ -64,4 +67,5 @@ class Index
   virtual void build(Table<>* source_table) = 0;
 };
 
+}  // namespace smoldb
 #endif  // SMOLDB_IDX_H

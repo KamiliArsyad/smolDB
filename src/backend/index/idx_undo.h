@@ -4,6 +4,8 @@
 #include "../access/access.h"
 #include "../storage/heapfile.h"
 
+namespace smoldb
+{
 class Index;
 
 enum class IndexUndoType
@@ -19,5 +21,6 @@ struct IndexUndoAction
   const Row row;
   const RID rid;  // Required for re-inserting on a delete-abort.
 };
+}  // namespace smoldb
 
 #endif  // SMOLDB_IDX_UNDO_H

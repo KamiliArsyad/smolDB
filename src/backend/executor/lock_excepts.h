@@ -2,26 +2,30 @@
 #define LOCK_EXCEPTS_H
 #include <stdexcept>
 
+namespace smoldb
+{
+
 /**
  * @brief Base class for exceptions that cause a transaction to abort but may be
  * retryable.
  */
 class TransactionAbortedException : public std::runtime_error
 {
-public:
+ public:
   using std::runtime_error::runtime_error;
 };
 
 class LockTimeoutException : public TransactionAbortedException
 {
-public:
+ public:
   LockTimeoutException() : TransactionAbortedException("Lock wait timeout") {}
 };
 
 class DeadlockException : public TransactionAbortedException
 {
-public:
+ public:
   DeadlockException() : TransactionAbortedException("Deadlock detected") {}
 };
 
-#endif //LOCK_EXCEPTS_H
+}  // namespace smoldb
+#endif  // LOCK_EXCEPTS_H

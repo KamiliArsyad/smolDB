@@ -14,6 +14,8 @@
 #include "storage/dsk_mgr.h"  // Needed for the real BufferPool
 #include "storage/wal_mgr.h"
 
+using namespace smoldb;
+
 class AccessTest : public testing::Test
 {
  protected:

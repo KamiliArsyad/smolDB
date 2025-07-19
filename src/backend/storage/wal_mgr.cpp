@@ -6,6 +6,8 @@
 
 #include "bfrpl.h"
 
+using namespace smoldb;
+
 WAL_mgr::WAL_mgr(const std::filesystem::path& path) : path_(path)
 {
   // Before starting the writer thread or opening the stream for appending,

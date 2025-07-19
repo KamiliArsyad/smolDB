@@ -2,7 +2,6 @@
 # Exclude main.cpp, which is only for the final executable.
 set(BACKEND_LIB_SRCS
         smoldb.cpp
-        server.cpp
         recovery_manager.cpp
 )
 
@@ -10,7 +9,6 @@ set(BACKEND_LIB_SRCS
 # it's good practice for IDEs and dependency tracking.
 set(BACKEND_LIB_HDRS
         smoldb.h
-        server.h
         recovery_manager.h
 )
 
@@ -32,9 +30,6 @@ target_include_directories(backend_lib
         PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-# The final executable for the backend application.
-add_executable(smolDB main.cpp)
-
 # Find necessary external packages.
 find_package(
         Boost REQUIRED COMPONENTS serialization
@@ -50,9 +45,4 @@ target_link_libraries(backend_lib
         executor_lib
         idx_lib
         proc_lib
-)
-
-# Link the main executable against our newly defined backend library.
-target_link_libraries(smolDB
-        PRIVATE backend_lib
 )

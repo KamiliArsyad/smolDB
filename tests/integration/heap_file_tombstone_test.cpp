@@ -5,6 +5,8 @@
 #include "smoldb.h"
 #undef private
 
+using namespace smoldb;
+
 class HeapFileTombstoneTest : public ::testing::Test
 {
  protected:

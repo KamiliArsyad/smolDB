@@ -8,6 +8,8 @@
 
 #include "backend/smoldb.h"
 
+using namespace smoldb;
+
 // Fuzz test that cycles through chaotic operations, crashes, recovery, and
 // verification.
 class AriesFuzzTest : public ::testing::Test

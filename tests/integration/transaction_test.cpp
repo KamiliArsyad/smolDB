@@ -1,8 +1,8 @@
-// ===== ../smolDB/tests/unit/transaction_test.cpp =====
-
 #include <gtest/gtest.h>
 
 #include "backend/smoldb.h"
+
+using namespace smoldb;
 
 class TransactionTest : public ::testing::Test
 {

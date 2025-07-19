@@ -10,6 +10,8 @@
 #undef private
 #include "idx.h"
 
+using namespace smoldb;
+
 TEST(DumpLoadTest, Storage)
 {
   // 1) build a catalog with metadata

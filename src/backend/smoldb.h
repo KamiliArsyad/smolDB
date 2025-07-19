@@ -15,6 +15,9 @@
 #include "storage/heapfile.h"
 #include "storage/wal_mgr.h"
 
+namespace smoldb
+{
+
 class Transaction;
 
 const size_t BUFFER_SIZE_FOR_TEST = std::thread::hardware_concurrency();
@@ -119,4 +122,5 @@ class SmolDB
   std::unique_ptr<ProcedureManager> proc_manager_;
 };
 
+}  // namespace smoldb
 #endif  // SMOLDB_H

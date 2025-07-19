@@ -5,6 +5,8 @@
 
 #include "smoldb.h"
 
+using namespace smoldb;
+
 class TableIteratorTest : public ::testing::Test
 {
  protected:

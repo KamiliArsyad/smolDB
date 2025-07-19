@@ -7,6 +7,9 @@
 #include "trx.h"
 #include "wal_mgr.h"
 
+namespace smoldb
+{
+
 enum class RecoveryState
 {
   IN_FLIGHT,
@@ -59,5 +62,7 @@ class RecoveryManager
   std::map<TransactionID, ATT_Entry> active_txn_table_;
   std::map<PageID, LSN> dirty_page_table_;
 };
+
+}  // namespace smoldb
 
 #endif  // RECOVERY_MANAGER_H

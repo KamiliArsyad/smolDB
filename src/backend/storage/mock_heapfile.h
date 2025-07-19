@@ -5,6 +5,9 @@
 #include "../executor/trx.h"
 #include "bfrpl.h"
 
+namespace smoldb
+{
+
 // MockHeapFile for testing Table in isolation
 class MockHeapFile
 {
@@ -36,22 +39,20 @@ class MockHeapFile
   PageID first_page_id() const { return 0; }
   PageID last_page_id() const { return rows.size() - 1; }
 
-  bool update(Transaction *txn, RID rid,
-                        std::span<const std::byte> new_tuple_data)
+  bool update(Transaction* txn, RID rid,
+              std::span<const std::byte> new_tuple_data)
   {
     return true;
   }
 
-  bool delete_row(Transaction* txn, RID rid)
+  bool delete_row(Transaction* txn, RID rid) { return true; }
+
+  bool get_next_tuple(RID& rid, std::vector<std::byte>& out_tuple) const
   {
     return true;
   }
-
-  bool get_next_tuple(RID &rid, std::vector<std::byte> &out_tuple) const
-  {
-    return true;
-  }
-
 };
+
+}  // namespace smoldb
 
 #endif  // MOCKHEAPFILE_H

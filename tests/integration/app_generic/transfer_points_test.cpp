@@ -8,6 +8,8 @@
 #include "backend/smoldb.h"
 #include "lock_excepts.h"
 
+using namespace smoldb;
+
 // The user-defined procedure, implemented here in the test file.
 class TransferPointsProcedure : public TransactionProcedure
 {

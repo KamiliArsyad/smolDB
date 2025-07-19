@@ -8,6 +8,8 @@
 
 #include "proc.h"
 
+namespace smoldb
+{
 // Forward declarations
 class TransactionManager;
 class Catalog;
@@ -42,8 +44,8 @@ class ProcedureManager
    * @return The named value returned by the procedure.
    */
   ProcedureResult execute_procedure(const std::string& proc_name,
-                          const ProcedureParams& params,
-                          const ProcedureOptions& options = {});
+                                    const ProcedureParams& params,
+                                    const ProcedureOptions& options = {});
 
  private:
   TransactionManager* txn_manager_;
@@ -51,5 +53,6 @@ class ProcedureManager
   std::unordered_map<std::string, std::unique_ptr<TransactionProcedure>>
       procedures_;
 };
+}  // namespace smoldb
 
 #endif  // SMOLDB_PROC_MGR_H

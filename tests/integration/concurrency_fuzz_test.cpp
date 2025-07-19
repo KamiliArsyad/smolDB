@@ -1,5 +1,3 @@
-// ===== ../smolDB/tests/unit/concurrency_fuzz_test.cpp =====
-
 #include <gtest/gtest.h>
 
 #include <atomic>
@@ -18,6 +16,8 @@
 
 #include "backend/smoldb.h"
 #undef private
+
+using namespace smoldb;
 
 /**
  * @class DMLAtomicityHarness

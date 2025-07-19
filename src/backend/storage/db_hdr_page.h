@@ -4,6 +4,9 @@
 #include "../executor/trx.h"
 #include "storage.h"
 
+namespace smoldb
+{
+
 // The first page of the database file is reserved for metadata.
 constexpr PageID DB_HEADER_PAGE_ID = 0;
 
@@ -18,4 +21,6 @@ struct DBHeaderPage
 
 static_assert(sizeof(DBHeaderPage) <= PAGE_SIZE - sizeof(PageHeader),
               "DBHeaderPage content is too large for a single page.");
-#endif //SMOLDB_DB_HEADER_PAGE_H
+
+}  // namespace smoldb
+#endif  // SMOLDB_DB_HEADER_PAGE_H

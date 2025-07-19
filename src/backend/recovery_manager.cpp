@@ -5,6 +5,8 @@
 #include <set>
 #include <stdexcept>
 
+using namespace smoldb;
+
 RecoveryManager::RecoveryManager(BufferPool* buffer_pool, WAL_mgr* wal_mgr)
     : buffer_pool_(buffer_pool), wal_mgr_(wal_mgr)
 {

@@ -7,6 +7,8 @@
 #include "smoldb.h"
 #include "wal_mgr.h"
 
+using namespace smoldb;
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Helpers
 static std::filesystem::path tmpfile(const char* name)

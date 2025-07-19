@@ -5,6 +5,9 @@
 
 #include "../executor/trx_types.h"
 
+namespace smoldb
+{
+
 // Forward declarations to minimize header dependencies.
 class Catalog;
 class Transaction;
@@ -44,5 +47,7 @@ class TransactionContext
   Transaction* txn_;
   Catalog* catalog_;
 };
+
+}  // namespace smoldb
 
 #endif  // SMOLDB_PROC_CTX_H

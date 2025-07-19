@@ -10,6 +10,8 @@
 #include "../storage/db_hdr_page.h"
 #include "../index/idx.h"
 
+using namespace smoldb;
+
 TransactionManager::TransactionManager(LockManager* lock_manager,
                                        WAL_mgr* wal_manager,
                                        BufferPool* buffer_pool)

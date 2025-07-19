@@ -13,6 +13,8 @@
 #include "backend/proc/proc_ctx.h"
 #include "backend/smoldb.h"
 
+using namespace smoldb;
+
 // We can reuse the same procedure from the correctness test
 class TransferPointsProcedureForBench : public TransactionProcedure
 {

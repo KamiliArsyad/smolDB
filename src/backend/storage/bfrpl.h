@@ -1,5 +1,3 @@
-// ===== ../smolDB/src/backend/storage/bfrpl.h =====
-
 #ifndef BUFFERPOOL_H
 #define BUFFERPOOL_H
 
@@ -13,6 +11,9 @@
 
 #include "dsk_mgr.h"
 #include "storage.h"
+
+namespace smoldb
+{
 
 class WAL_mgr;
 class PageGuard;
@@ -293,4 +294,5 @@ class PageWriter
   std::unique_lock<std::shared_mutex> lock_;
 };
 
+}  // namespace smoldb
 #endif  // BUFFERPOOL_H

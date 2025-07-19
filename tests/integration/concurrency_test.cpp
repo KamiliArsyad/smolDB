@@ -5,6 +5,8 @@
 
 #include "backend/smoldb.h"
 
+using namespace smoldb;
+
 class ConcurrencyTest : public ::testing::Test
 {
  protected:

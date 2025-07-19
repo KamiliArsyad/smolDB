@@ -16,6 +16,9 @@
 #include <unordered_map>
 #include <vector>
 
+namespace smoldb
+{
+
 typedef uint64_t PageID;
 using LSN = uint64_t;
 constexpr size_t PAGE_SIZE = 8192;
@@ -33,7 +36,10 @@ struct alignas(64) Page
   std::array<std::byte, PAGE_SIZE - sizeof(PageHeader)> raw_array;
 
   [[nodiscard]]
-  std::byte* data() noexcept { return raw_array.data(); }
+  std::byte* data() noexcept
+  {
+    return raw_array.data();
+  }
   [[nodiscard]]
   const std::byte* data() const noexcept
   {
@@ -54,5 +60,7 @@ struct Frame
 };
 
 using FrameIter = std::list<Frame>::iterator;
+
+}  // namespace smoldb
 
 #endif  // STORAGE_H

@@ -10,6 +10,8 @@
 
 #include "trx.h"
 
+namespace smoldb
+{
 enum class LockMode
 {
   SHARED,
@@ -101,4 +103,5 @@ class LockManager
   Shard& get_shard(const RID& rid);
 };
 
+}  // namespace smoldb
 #endif  // LOCK_MANAGER_H

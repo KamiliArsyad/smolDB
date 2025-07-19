@@ -6,6 +6,8 @@
 #include "smoldb.h"
 #undef private
 
+using namespace smoldb;
+
 class HeapFileBitmapTest : public ::testing::Test
 {
  protected:

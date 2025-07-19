@@ -3,6 +3,8 @@
 #include "../access/access.h"
 #include "../executor/trx.h"
 
+using namespace smoldb;
+
 TransactionContext::TransactionContext(Transaction* txn, Catalog* catalog)
     : txn_(txn), catalog_(catalog)
 {

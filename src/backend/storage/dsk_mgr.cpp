@@ -3,6 +3,8 @@
 #include <cstring>
 #include <mutex>
 
+using namespace smoldb;
+
 void Disk_mgr::ensure_open() {
   // This is an internal helper, assumes caller holds the lock.
   assert(path_ != "");

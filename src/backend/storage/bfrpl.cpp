@@ -1,5 +1,3 @@
-// ===== ../smolDB/src/backend/storage/bfrpl.cpp =====
-
 #include "bfrpl.h"
 
 #include <cassert>
@@ -7,6 +5,8 @@
 
 #include "dsk_mgr.h"
 #include "wal_mgr.h"
+
+using namespace smoldb;
 
 // --- PageGuard method implementations ---
 PageReader PageGuard::read() const

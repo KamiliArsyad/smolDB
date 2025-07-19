@@ -22,6 +22,9 @@ struct hash<std::chrono::time_point<Clock, Dur>>
 };
 }  // namespace boost
 
+namespace smoldb
+{
+
 class InMemoryHashIndex : public Index
 {
  public:
@@ -40,4 +43,5 @@ class InMemoryHashIndex : public Index
   const uint8_t key_column_id_;
 };
 
+}  // namespace smoldb
 #endif  // SMOLDB_H_IDX_H

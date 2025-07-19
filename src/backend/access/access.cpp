@@ -12,6 +12,8 @@
 #include "../index/idx.h"
 #include "../storage/mock_heapfile.h"
 
+using namespace smoldb;
+
 // Row implementation
 std::vector<std::byte> Row::to_bytes() const
 {

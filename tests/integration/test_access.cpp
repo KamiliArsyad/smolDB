@@ -12,6 +12,8 @@
 #include "idx.h"
 #include "mock_heapfile.h"
 
+using namespace smoldb;
+
 static Schema make_simple_schema()
 {
   Column c0{0, "id", Col_type::INT, false, {}};

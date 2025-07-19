@@ -5,6 +5,8 @@
 #undef private
 #include "idx.h"
 
+using namespace smoldb;
+
 class HashIndexTest : public ::testing::Test
 {
  protected:

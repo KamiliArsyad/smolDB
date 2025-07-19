@@ -12,6 +12,8 @@
 #include "smoldb.h"
 #include "wal_mgr.h"
 
+using namespace smoldb;
+
 class HeapFileTest : public ::testing::Test
 {
  protected:

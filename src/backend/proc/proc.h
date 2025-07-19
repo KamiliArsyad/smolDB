@@ -6,6 +6,8 @@
 
 #include "../access/value.h"
 
+namespace smoldb
+{
 // Forward declaration to avoid circular include with proc_ctx.h
 class TransactionContext;
 
@@ -29,8 +31,6 @@ enum class ProcedureStatus
   ABORT
 };
 
-namespace smoldb
-{
 namespace backoff
 {
 inline std::chrono::milliseconds constant(int retry_count)
@@ -43,7 +43,6 @@ inline std::chrono::milliseconds linear(int retry_count)
 }
 // Add exponential, etc. later if needed.
 }  // namespace backoff
-}  // namespace smoldb
 
 struct ProcedureOptions
 {
@@ -82,5 +81,6 @@ class TransactionProcedure
                                   const ProcedureParams& params,
                                   ProcedureResult& result) = 0;
 };
+}  // namespace smoldb
 
 #endif  // SMOLDB_PROC_H

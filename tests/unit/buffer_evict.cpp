@@ -5,6 +5,8 @@
 #include "wal_mgr.h"
 #undef private
 
+using namespace smoldb;
+
 /* -------- helpers --------------------------------------------------- */
 static auto get_disk_mgr(std::filesystem::path& tmp_path)
 {

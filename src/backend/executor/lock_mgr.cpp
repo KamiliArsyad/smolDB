@@ -4,6 +4,8 @@
 
 #include "lock_excepts.h"
 
+using namespace smoldb;
+
 LockManager::LockManager()
     : shard_count_(std::thread::hardware_concurrency()),
       lock_timeout_(100)  // 100ms timeout for deadlock prevention

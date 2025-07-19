@@ -6,6 +6,8 @@
 #include "index/idx.h"
 #include "recovery_manager.h"
 
+using namespace smoldb;
+
 SmolDB::SmolDB(const smoldb::DBConfig& config)
     : db_directory_(config.db_directory)
 {
