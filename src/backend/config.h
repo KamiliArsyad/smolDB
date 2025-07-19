@@ -17,7 +17,7 @@ struct DBConfig
 {
   std::filesystem::path db_directory = "./smoldb_data";
   size_t buffer_pool_size_frames = 128;
-  // std::string listen_address = "0.0.0.0:50051"; // For future gRPC server
+  std::string listen_address = "0.0.0.0:50051";
 };
 
 }  // namespace smoldb

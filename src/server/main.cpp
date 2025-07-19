@@ -21,11 +21,9 @@ class EchoProcedure : public smoldb::TransactionProcedure
   }
 };
 
-void RunServer()
+void RunServer(smoldb::DBConfig& db_config)
 {
-  std::string server_address("0.0.0.0:50051");
-
-  smoldb::DBConfig db_config;
+  std::string server_address(db_config.listen_address);
   smoldb::SmolDB db_engine(db_config);
   db_engine.startup();
   db_engine.get_procedure_manager()->register_procedure(
@@ -45,7 +43,7 @@ void RunServer()
 
   builder.RegisterService(&service);
 
-  std::unique_ptr<grpc::Server> server(builder.BuildAndStart());
+  std::unique_ptr server(builder.BuildAndStart());
   std::cout << "Server listening on " << server_address << std::endl;
 
   server->Wait();
@@ -54,6 +52,7 @@ void RunServer()
 
 int main(int argc, char** argv)
 {
-  RunServer();
+  smoldb::DBConfig config;
+  RunServer(config);
   return 0;
 }

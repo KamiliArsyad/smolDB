@@ -73,19 +73,26 @@ grpc::ServerUnaryReactor* GrpcCallbackService::ExecuteProcedure(
   auto* reactor = context->DefaultReactor();
   try
   {
-    // 1. Marshall request from Protobuf to C++ types
+    // Marshall request from Protobuf to C++ types
     smoldb::ProcedureParams params;
     for (const auto& [key, val] : request->params())
     {
       params[key] = to_backend_value(val);
     }
 
-    // 2. Execute the procedure
-    smoldb::ProcedureResult result =
+    auto [status, result] =
         proc_mgr_->execute_procedure(request->procedure_name(), params);
 
-    // 3. Marshall response from C++ to Protobuf types
-    response->set_status(smoldb::rpc::ExecuteProcedureResponse::SUCCESS);
+    // Marshall response from C++ to Protobuf types
+    if (status == smoldb::ProcedureStatus::ABORT)
+    {
+      response->set_status(smoldb::rpc::ExecuteProcedureResponse::ABORT);
+    }
+    else
+    {
+      response->set_status(smoldb::rpc::ExecuteProcedureResponse::SUCCESS);
+    }
+
     for (const auto& [key, val] : result)
     {
       from_backend_value(val, &(*response->mutable_results())[key]);

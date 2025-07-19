@@ -8,7 +8,6 @@
 #include "server/server.h"
 #include "smoldb.grpc.pb.h"
 
-// Test-local version of the TransferPoints procedure
 class TransferPointsTestProc : public smoldb::TransactionProcedure
 {
  public:
@@ -80,7 +79,7 @@ class GrpcTest : public ::testing::Test
     table->insert_row(txn_id, r2);
     db_->commit_transaction(txn_id);
 
-    server_address_ = "localhost:50052";
+    server_address_ = db_config.listen_address;
     service_ =
         std::make_unique<GrpcCallbackService>(db_->get_procedure_manager());
 

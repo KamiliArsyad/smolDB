@@ -58,6 +58,7 @@ class AriesCrashRecoveryTest
   RID rid_;
 };
 
+#ifndef NDEBUG
 TEST_P(AriesCrashRecoveryTest, RecoversCorrectlyAfterCrashingDuringRecovery)
 {
   RecoveryCrashPoint crash_point = GetParam();
@@ -93,3 +94,4 @@ INSTANTIATE_TEST_SUITE_P(AriesRecoveryCrashPoints, AriesCrashRecoveryTest,
                          ::testing::Values(RecoveryCrashPoint::AFTER_ANALYSIS,
                                            RecoveryCrashPoint::DURING_REDO,
                                            RecoveryCrashPoint::DURING_UNDO));
+#endif

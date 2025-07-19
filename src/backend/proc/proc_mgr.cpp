@@ -26,9 +26,9 @@ void ProcedureManager::register_procedure(
   procedures_[name] = std::move(proc);
 }
 
-ProcedureResult ProcedureManager::execute_procedure(const std::string& proc_name,
-                                          const ProcedureParams& params,
-                                          const ProcedureOptions& options)
+std::pair<ProcedureStatus, ProcedureResult> ProcedureManager::execute_procedure(
+    const std::string& proc_name, const ProcedureParams& params,
+    const ProcedureOptions& options)
 {
   auto it = procedures_.find(proc_name);
   if (it == procedures_.end())
@@ -36,6 +36,7 @@ ProcedureResult ProcedureManager::execute_procedure(const std::string& proc_name
     throw std::invalid_argument("Procedure '" + proc_name + "' not found.");
   }
   TransactionProcedure* proc = it->second.get();
+  ProcedureStatus status;
 
   int attempts = options.max_retries + 1;
   int retry_count = 0;
@@ -49,7 +50,7 @@ ProcedureResult ProcedureManager::execute_procedure(const std::string& proc_name
     {
       Transaction* txn = txn_manager_->get_transaction(txn_id);
       TransactionContext ctx(txn, catalog_);
-      ProcedureStatus status = proc->execute(ctx, params, result);
+      status = proc->execute(ctx, params, result);
       if (status == ProcedureStatus::ABORT)
       {
         should_abort_logically = true;
@@ -80,6 +81,6 @@ ProcedureResult ProcedureManager::execute_procedure(const std::string& proc_name
     {
       txn_manager_->commit(txn_id);
     }
-    return result;  // Success, exit the loop.
+    return {status, result};
   }
 }

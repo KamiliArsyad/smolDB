@@ -43,9 +43,9 @@ class ProcedureManager
    * @param options User-configurable option e.g., for handling failures.
    * @return The named value returned by the procedure.
    */
-  ProcedureResult execute_procedure(const std::string& proc_name,
-                                    const ProcedureParams& params,
-                                    const ProcedureOptions& options = {});
+  std::pair<ProcedureStatus, ProcedureResult> execute_procedure(
+      const std::string& proc_name, const ProcedureParams& params,
+      const ProcedureOptions& options = {});
 
  private:
   TransactionManager* txn_manager_;
