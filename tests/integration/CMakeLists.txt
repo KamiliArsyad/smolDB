@@ -18,6 +18,7 @@ set(INTEGRATION_SRCS
         transaction_test.cpp
         app_generic/transfer_points_test.cpp
         app_generic/throughput_benchmark.cpp
+        grpc_test.cpp
 )
 
 # Use a distinct name for the executable target.
@@ -28,7 +29,20 @@ target_include_directories(smoldb_integration_tests_run
         ${CMAKE_SOURCE_DIR}/src/
 )
 
-target_link_libraries(smoldb_integration_tests_run gtest gtest_main backend_lib storage_lib access_lib executor_lib idx_lib proc_lib)
+target_link_libraries(
+        smoldb_integration_tests_run
+        gtest
+        gtest_main
+        backend_lib
+        storage_lib
+        access_lib
+        executor_lib
+        idx_lib
+        proc_lib
+        server_lib
+        gRPC::grpc++_reflection
+        smoldb_proto
+)
 
 # Use the executable target name in the COMMAND for add_test.
 if (ENABLE_TSAN)
