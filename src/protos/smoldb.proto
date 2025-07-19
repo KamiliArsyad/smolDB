@@ -3,7 +3,7 @@ syntax = "proto3";
 // We'll need this for mapping datetime <-> time_point
 import "google/protobuf/timestamp.proto";
 
-package smoldb;
+package smoldb.rpc;
 
 // The generic service for interacting with the SmolDB engine.
 service SmolDBService {
