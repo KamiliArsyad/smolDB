@@ -127,14 +127,12 @@ void TransactionManager::abort(TransactionID txn_id)
     }
   }
 
-  // This is now a full, ARIES-compliant runtime abort.
-  std::map<LSN, std::pair<LogRecordHeader, std::vector<char>>> log_records =
-      wal_manager_->read_all_records();
-
   LSN current_lsn = txn->get_prev_lsn();
   while (current_lsn != 0)
   {
-    const auto& [hdr, payload_vec] = log_records.at(current_lsn);
+    LogRecordHeader hdr;
+    std::vector<char> payload_vec;
+    assert(wal_manager_->get_record(current_lsn, hdr, payload_vec));
     LSN next_lsn_in_chain = 0;
 
     if (hdr.type == CLR)
