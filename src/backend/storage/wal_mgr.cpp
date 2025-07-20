@@ -10,18 +10,27 @@ using namespace smoldb;
 
 WAL_mgr::WAL_mgr(const std::filesystem::path& path) : path_(path)
 {
+  // To be safe, we're locking the WAL.
+  std::scoped_lock lock(general_mtx_);
+
   // Before starting the writer thread or opening the stream for appending,
   // we must first scan the existing WAL to find the correct starting LSN.
   LSN max_lsn = 0;
   std::ifstream in(path_, std::ios::binary);
   if (in.is_open())
   {
+    std::streamoff curr_offset = 0;
+
     while (in.peek() != EOF)
     {
-      LogRecordHeader hdr;
+      curr_offset = in.tellg();
+
+      LogRecordHeader hdr{};
       in.read(reinterpret_cast<char*>(&hdr), sizeof(hdr));
       if (in.gcount() != sizeof(hdr)) break;
+      if (hdr.lsn == 0) continue;
 
+      lsn_to_offset_idx_[hdr.lsn] = curr_offset;
       max_lsn = std::max(max_lsn, hdr.lsn);
 
       // Seek past the payload to get to the next record quickly.
@@ -84,7 +93,14 @@ void WAL_mgr::writer_thread_main()
       std::scoped_lock lock(general_mtx_);  // Lock before writing to the file
       for (const auto& batch : local_queue)
       {
-        wal_stream_.write(batch->data.data(), batch->data.size());
+        std::streamoff offset = wal_stream_.tellp();
+
+        const auto* hdr =
+            reinterpret_cast<const LogRecordHeader*>(batch->data.data());
+        lsn_to_offset_idx_[hdr->lsn] = offset;
+
+        wal_stream_.write(reinterpret_cast<const std::ostream::char_type*>(hdr),
+                          batch->data.size());
       }
       wal_stream_.flush();
 
@@ -225,12 +241,13 @@ std::map<LSN, std::pair<LogRecordHeader, std::vector<char>>>
 WAL_mgr::read_all_records()
 {
   std::scoped_lock lock(general_mtx_);
-  std::map<LSN, std::pair<LogRecordHeader, std::vector<char>>> records;
+  std::unordered_map<LSN, std::pair<LogRecordHeader, std::vector<char>>>
+      records;
 
   std::ifstream in(path_, std::ios::binary);
   if (!in.is_open())
   {
-    return records;
+    return {records.begin(), records.end()};
   }
 
   while (in.peek() != EOF)
@@ -249,5 +266,47 @@ WAL_mgr::read_all_records()
     }
     records[hdr.lsn] = {hdr, std::move(buf)};
   }
-  return records;
+  return {records.begin(), records.end()};
+}
+
+bool WAL_mgr::get_record(LSN lsn, LogRecordHeader& header_out,
+                         std::vector<char>& payload_out)
+{
+  std::scoped_lock lock(general_mtx_);
+  if (!lsn_to_offset_idx_.contains(lsn)) return false;
+  auto offset = lsn_to_offset_idx_[lsn];
+
+  // Open a separate ifstream for reading. This is critical to avoid interfering
+  // with the state of the append-only wal_stream_.
+  std::ifstream in(path_, std::ios::binary);
+  if (!in.is_open())
+  {
+    return false;  // Should not happen if WAL exists.
+  }
+
+  in.seekg(offset);
+  if (!in) return false;
+
+  in.read(reinterpret_cast<char*>(&header_out), sizeof(LogRecordHeader));
+  if (in.gcount() != sizeof(LogRecordHeader)) return false;
+
+  // Sanity check that the record on disk has the LSN we expect.
+  if (header_out.lsn != lsn)
+  {
+    throw std::runtime_error("LSN mismatch: index corruption.");
+  }
+
+  uint32_t payload_size = header_out.lr_length - sizeof(LogRecordHeader);
+  if (payload_size > 0)
+  {
+    payload_out.resize(payload_size);
+    in.read(payload_out.data(), payload_size);
+    if (static_cast<uint32_t>(in.gcount()) != payload_size) return false;
+  }
+  else
+  {
+    payload_out.clear();
+  }
+
+  return true;
 }

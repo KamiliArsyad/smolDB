@@ -139,6 +139,16 @@ class WAL_mgr
   std::map<LSN, std::pair<LogRecordHeader, std::vector<char>>>
   read_all_records();
 
+  /**
+   * @brief Random-access fast lookup to find a WAL record.
+   * @param lsn {in} The LSN to look for.
+   * @param header {out} Header of the record.
+   * @param payload {out} The record payload.
+   * @return False iff the queried LSN is not found.
+   */
+  bool get_record(LSN lsn, LogRecordHeader& header_out,
+                  std::vector<char>& payload_out);
+
   void flush_to_lsn(LSN target)
   {
     std::scoped_lock lock(general_mtx_);
@@ -154,9 +164,13 @@ class WAL_mgr
   std::atomic<LSN> flushed_lsn_ = 0;
 
   std::mutex general_mtx_;
+  // Mutex for the writer queue.
   std::mutex mtx_;
   std::condition_variable cv_;
   std::list<std::unique_ptr<LogRecordBatch>> write_queue_;
+
+  // Mutex needed to protect this: general_mtx_
+  std::map<LSN, std::streamoff> lsn_to_offset_idx_;
 
   std::thread writer_thread_;
   std::atomic<bool> stop_writer_ = false;
