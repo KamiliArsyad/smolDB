@@ -6,9 +6,9 @@
 #include <stdexcept>
 #include <vector>
 
+#include "../index/idx.h"
 #include "../storage/bfrpl.h"
 #include "../storage/db_hdr_page.h"
-#include "../index/idx.h"
 
 using namespace smoldb;
 
@@ -39,11 +39,13 @@ TransactionID TransactionManager::begin()
   TransactionID new_txn_id = next_txn_id_.fetch_add(1);
 
   // Now, persist this new counter value back to the header page.
-  PageGuard header_page_guard = buffer_pool_->fetch_page(DB_HEADER_PAGE_ID);
-  auto page = header_page_guard.write();
-  auto* header_page_data = reinterpret_cast<DBHeaderPage*>(page->data());
-  header_page_data->next_transaction_id_ = next_txn_id_.load();
-  header_page_guard.mark_dirty();  // Ensure this change is flushed eventually
+  {
+    PageGuard header_page_guard = buffer_pool_->fetch_page(DB_HEADER_PAGE_ID);
+    auto page = header_page_guard.write();
+    auto* header_page_data = reinterpret_cast<DBHeaderPage*>(page->data());
+    header_page_data->next_transaction_id_ = next_txn_id_.load();
+    header_page_guard.mark_dirty();  // Ensure this change is flushed eventually
+  }
 
   auto txn = std::make_unique<Transaction>(new_txn_id);
 
