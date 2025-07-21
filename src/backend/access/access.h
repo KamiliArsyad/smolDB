@@ -88,20 +88,19 @@ class Index;
 class TransactionManager;
 class LockManager;
 
-enum class Col_type
-{
-  INT,
-  FLOAT,
-  STRING,
-  DATETIME
-};
-
 struct Column
 {
   uint8_t id;
   std::string name;
   Col_type type;
   bool nullable;
+
+  /**
+   * @brief Explicit size for fixed-size types (e.g., string). Ignored
+   * for other types.
+   */
+  size_t size = 0;
+
   std::vector<std::byte> default_bytes;
 
   bool operator==(Column const& obj) const { return id == obj.id; }

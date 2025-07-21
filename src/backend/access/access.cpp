@@ -47,6 +47,24 @@ Row Row::from_bytes(const std::vector<std::byte>& data, const Schema& schema)
   return row;
 }
 
+/**
+ * @brief Calculates the row / tuple data size of a schema.
+ * @param schema Schema to calculate the row size of
+ * @return The size of the row.
+ */
+static size_t calculate_row_size(const Schema& schema)
+{
+  size_t size = 0;
+  for (const auto &col : schema)
+  {
+    if (col.type != Col_type::STRING) size += type_size(col.type);
+    else if (col.size == 0) throw std::invalid_argument("String size is zero");
+    else size += col.size;
+  }
+
+  return size;
+}
+
 template <typename HeapFileT>
 void Table<HeapFileT>::Iterator::find_next()
 {

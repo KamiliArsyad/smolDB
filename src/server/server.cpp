@@ -24,7 +24,7 @@ smoldb::Value to_backend_value(const smoldb::rpc::Value& proto_val)
     {
       auto ms = google::protobuf::util::TimeUtil::TimestampToMilliseconds(
           proto_val.timestamp_value());
-      return smoldb::datetime(std::chrono::milliseconds(ms));
+      return smoldb::DATETIME_TYPE(std::chrono::milliseconds(ms));
     }
     default:
       throw std::invalid_argument("Unknown protobuf value type");
@@ -47,7 +47,7 @@ void from_backend_value(const smoldb::Value& backend_val,
   {
     proto_val->set_string_value(*val);
   }
-  else if (const auto* val = boost::get<smoldb::datetime>(&backend_val))
+  else if (const auto* val = boost::get<smoldb::DATETIME_TYPE>(&backend_val))
   {
     auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                   val->time_since_epoch())
