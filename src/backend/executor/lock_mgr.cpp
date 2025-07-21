@@ -175,13 +175,15 @@ void LockManager::release_all(Transaction* txn)
   {
     Shard& shard = get_shard(rid);
     std::scoped_lock lock(shard.mutex);
+    auto iter = shard.lock_table.find(rid);
 
-    if (shard.lock_table.find(rid) == shard.lock_table.end())
+    if (iter == shard.lock_table.end())
     {
       continue;  // Should not happen in normal operation
     }
 
-    auto& queue = shard.lock_table.at(rid);
+    auto& queue = iter->second;
+
     for (auto it = queue.requests.begin(); it != queue.requests.end(); ++it)
     {
       if (it->txn_id == txn->get_id() && it->granted)
