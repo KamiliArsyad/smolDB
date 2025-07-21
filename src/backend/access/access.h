@@ -95,13 +95,13 @@ struct Column
   Col_type type;
   bool nullable;
 
+  std::vector<std::byte> default_bytes;
+
   /**
    * @brief Explicit size for fixed-size types (e.g., string). Ignored
    * for other types.
    */
   size_t size = 0;
-
-  std::vector<std::byte> default_bytes;
 
   bool operator==(Column const& obj) const { return id == obj.id; }
 
@@ -220,6 +220,8 @@ class Row
                         const Schema& schema);
 
  private:
+  size_t calculate_packed_size() const;
+
   bool is_value_compatible(const Value& value, Col_type type) const
   {
     switch (type)

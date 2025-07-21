@@ -17,7 +17,7 @@ using namespace smoldb;
 static Schema make_simple_schema()
 {
   Column c0{0, "id", Col_type::INT, false, {}};
-  Column c1{1, "name", Col_type::STRING, false, {}};
+  Column c1{1, "name", Col_type::STRING, false, {}, 32};
   return Schema{c0, c1};
 }
 

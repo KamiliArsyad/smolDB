@@ -17,34 +17,135 @@ using namespace smoldb;
 // Row implementation
 std::vector<std::byte> Row::to_bytes() const
 {
-  std::ostringstream oss;
-  boost::archive::binary_oarchive oa(oss);
-  oa << *this;
+  size_t required_size = calculate_packed_size();
+  std::vector<std::byte> buffer(required_size);
+  // Zero-initialize the buffer. This is crucial for ensuring that char arrays
+  // for strings are null-padded, making deserialization safer.
+  std::memset(buffer.data(), 0, required_size);
 
-  std::string str = oss.str();
-  std::vector<std::byte> bytes(str.size());
-  std::memcpy(bytes.data(), str.data(), str.size());
-  return bytes;
+  auto* current_pos = buffer.data();
+
+  for (size_t i = 0; i < schema_.size(); ++i)
+  {
+    const auto& col = schema_[i];
+    const auto& val = values_[i];
+
+    switch (col.type)
+    {
+      case Col_type::INT:
+      {
+        auto v = boost::get<int32_t>(val);
+        std::memcpy(current_pos, &v, sizeof(v));
+        current_pos += sizeof(v);
+        break;
+      }
+      case Col_type::FLOAT:
+      {
+        auto v = boost::get<float>(val);
+        std::memcpy(current_pos, &v, sizeof(v));
+        current_pos += sizeof(v);
+        break;
+      }
+      case Col_type::DATETIME:
+      {
+        auto v = boost::get<DATETIME_TYPE>(val);
+        std::memcpy(current_pos, &v, sizeof(v));
+        current_pos += sizeof(v);
+        break;
+      }
+      case Col_type::STRING:
+      {
+        const auto& v = boost::get<std::string>(val);
+        // The buffer is already zeroed, so we don't need to worry about the
+        // null terminator.
+        std::memcpy(current_pos, v.c_str(), v.length());
+        current_pos += col.size;
+        break;
+      }
+    }
+  }
+  return buffer;
 }
 
 Row Row::from_bytes(const std::vector<std::byte>& data, const Schema& schema)
 {
-  std::string str(reinterpret_cast<const char*>(data.data()), data.size());
-  std::istringstream iss(str);
-  boost::archive::binary_iarchive ia(iss);
+  Row row(schema);  // Constructs the row with a correctly sized values_ vector
+  const auto* current_pos = data.data();
 
-  Row row;
-  ia >> row;
-
-  // Ensure the schema matches (in case of schema evolution)
-  if (row.schema_ != schema)
+  for (size_t i = 0; i < schema.size(); ++i)
   {
-    // For now, just update the schema. In the future, we might want schema
-    // migration logic
-    row.schema_ = schema;
+    const auto& col = schema[i];
+    Value v;
+
+    switch (col.type)
+    {
+      case Col_type::INT:
+      {
+        int32_t val;
+        std::memcpy(&val, current_pos, sizeof(val));
+        v = val;
+        current_pos += sizeof(val);
+        break;
+      }
+      case Col_type::FLOAT:
+      {
+        float val;
+        std::memcpy(&val, current_pos, sizeof(val));
+        v = val;
+        current_pos += sizeof(val);
+        break;
+      }
+      case Col_type::DATETIME:
+      {
+        DATETIME_TYPE val;
+        std::memcpy(&val, current_pos, sizeof(val));
+        v = val;
+        current_pos += sizeof(val);
+        break;
+      }
+      case Col_type::STRING:
+      {
+        // Construct the string directly from the pointer. The underlying
+        // buffer was zeroed, so this is safe even if the original string
+        // was shorter than col.size.
+        v = std::string(reinterpret_cast<const char*>(current_pos));
+        current_pos += col.size;
+        break;
+      }
+    }
+    row.values_[i] = v;
   }
 
   return row;
+}
+
+size_t Row::calculate_packed_size() const
+{
+  size_t total_size = 0;
+  for (const auto& col : schema_)
+  {
+    switch (col.type)
+    {
+      case Col_type::INT:
+        total_size += sizeof(int32_t);
+        break;
+      case Col_type::FLOAT:
+        total_size += sizeof(float);
+        break;
+      case Col_type::DATETIME:
+        total_size += sizeof(DATETIME_TYPE);
+        break;
+      case Col_type::STRING:
+        if (col.size == 0)
+        {
+          throw std::invalid_argument("STRING column '" + col.name +
+                                      "' must have a non-zero size.");
+        }
+        total_size += col.size;
+        break;
+    }
+  }
+  return total_size;
 }
 
 /**
@@ -55,11 +156,14 @@ Row Row::from_bytes(const std::vector<std::byte>& data, const Schema& schema)
 static size_t calculate_row_size(const Schema& schema)
 {
   size_t size = 0;
-  for (const auto &col : schema)
+  for (const auto& col : schema)
   {
-    if (col.type != Col_type::STRING) size += type_size(col.type);
-    else if (col.size == 0) throw std::invalid_argument("String size is zero");
-    else size += col.size;
+    if (col.type != Col_type::STRING)
+      size += type_size(col.type);
+    else if (col.size == 0)
+      throw std::invalid_argument("String size is zero");
+    else
+      size += col.size;
   }
 
   return size;
@@ -386,6 +490,13 @@ void Catalog::create_table(uint8_t table_id, const std::string& table_name,
     }
   }
 
+  const size_t required_size = calculate_row_size(schema);
+  if (required_size > max_tuple_size)
+    throw std::invalid_argument("The required size of the row (" +
+                                std::to_string(required_size) +
+                                ") is greater than the maximum tuple size (" +
+                                std::to_string(max_tuple_size) + ")");
+
   assert(buffer_pool_ && "BufferPool not set in Catalog");
   assert(wal_mgr_ && "WAL_mgr not set in Catalog");
   assert(lock_manager_ && "LockManager not set in Catalog");
@@ -393,10 +504,10 @@ void Catalog::create_table(uint8_t table_id, const std::string& table_name,
 
   PageID first_page_id = buffer_pool_->allocate_page();
   m_schemas_.emplace(table_id, TableMetadata{schema, first_page_id, table_name,
-                                             max_tuple_size});
+                                             required_size});
 
   auto heap_file = std::make_unique<HeapFile>(buffer_pool_, wal_mgr_,
-                                              first_page_id, max_tuple_size);
+                                              first_page_id, required_size);
   tables_[table_id] =
       std::make_unique<Table<>>(std::move(heap_file), table_id, table_name,
                                 schema, lock_manager_, txn_manager_);

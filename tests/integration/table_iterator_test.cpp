@@ -31,7 +31,7 @@ class TableIteratorTest : public ::testing::Test
   Schema make_simple_schema()
   {
     return {{0, "id", Col_type::INT, false, {}},
-            {1, "val", Col_type::STRING, false, {}}};
+            {1, "val", Col_type::STRING, false, {}, 32}};
   }
 
   std::filesystem::path test_dir;

@@ -71,7 +71,7 @@ class HeapFile
   PageID first_page_id() const { return first_page_id_; }
   PageID last_page_id() const { return last_page_id_.load(); }
 
-  static constexpr size_t BITMAP_SIZE_BYTES = 64;
+  static constexpr size_t BITMAP_SIZE_BYTES = 128;
   static constexpr size_t BITMAP_SIZE_BITS = BITMAP_SIZE_BYTES * 8;
   static constexpr uint32_t DELETED_FLAG = 0x80000000;
 

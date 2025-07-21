@@ -22,7 +22,7 @@ class HashIndexTest : public ::testing::Test
 
     // Setup a table with a primary key-like column
     Schema schema = {{0, "id", Col_type::INT, false, {}},
-                     {1, "val", Col_type::STRING, false, {}}};
+                     {1, "val", Col_type::STRING, false, {}, 16}};
     db->create_table(1, "users", schema);
     db->create_index(1, 0, "pk_users");  // Index on column 0 ('id')
   }
