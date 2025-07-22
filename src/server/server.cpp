@@ -70,18 +70,20 @@ grpc::ServerUnaryReactor* GrpcCallbackService::ExecuteProcedure(
     const smoldb::rpc::ExecuteProcedureRequest* request,
     smoldb::rpc::ExecuteProcedureResponse* response)
 {
+  // **RACE FIX**: Immediately copy all data from the request to ensure its
+  // lifetime.
+  const std::string proc_name = request->procedure_name();
+  smoldb::ProcedureParams params;
+  for (const auto& [key, val] : request->params())
+  {
+    params[key] = to_backend_value(val);
+  }
+
   auto* reactor = context->DefaultReactor();
   try
   {
-    // Marshall request from Protobuf to C++ types
-    smoldb::ProcedureParams params;
-    for (const auto& [key, val] : request->params())
-    {
-      params[key] = to_backend_value(val);
-    }
-
-    auto [status, result] =
-        proc_mgr_->execute_procedure(request->procedure_name(), params);
+    // Now, use the local copies which are guaranteed to be valid.
+    auto [status, result] = proc_mgr_->execute_procedure(proc_name, params);
 
     // Marshall response from C++ to Protobuf types
     if (status == smoldb::ProcedureStatus::ABORT)

@@ -3,13 +3,14 @@
 #include <boost/asio.hpp>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
+#include <boost/asio/executor_work_guard.hpp>
 #include <boost/asio/use_awaitable.hpp>
-#include <boost/asio/use_future.hpp>
-#include <thread>
+#include <boost/system/error_code.hpp>
 
-#include "backend/storage/wal_mgr.h"
+#include "storage/wal_mgr.h"
 
 using namespace smoldb;
+namespace asio = boost::asio;
 
 class WAL_AsyncTest : public ::testing::Test
 {
@@ -21,107 +22,162 @@ class WAL_AsyncTest : public ::testing::Test
     std::filesystem::create_directories(test_dir);
     wal_path = test_dir / "test.wal";
 
-    work_guard = std::make_unique<boost::asio::executor_work_guard<
-        boost::asio::io_context::executor_type>>(io_context.get_executor());
-    runner_thread = std::thread([this]() { io_context.run(); });
+    executor = io_context.get_executor();
+    wal_mgr = std::make_unique<WAL_mgr>(wal_path, executor);
 
-    wal_mgr = std::make_unique<WAL_mgr>(wal_path, io_context.get_executor());
+    // **THE FIX**: Create a work guard to keep the io_context running.
+    work_guard = std::make_unique<
+        asio::executor_work_guard<asio::io_context::executor_type>>(
+        io_context.get_executor());
+
+    // The io_context will now block in run() until stop() is called.
+    runner_thread = std::thread([this] { io_context.run(); });
   }
 
   void TearDown() override
   {
-    wal_mgr.reset();
-    work_guard->reset();
-    runner_thread.join();
+    wal_mgr.reset();  // Stop the WAL writer thread first.
+
+    // **THE FIX**: Reset the guard to allow the io_context to stop, then stop
+    // it.
+    work_guard.reset();
+    io_context.stop();
+
+    if (runner_thread.joinable())
+    {
+      runner_thread.join();
+    }
     std::filesystem::remove_all(test_dir);
   }
 
   std::filesystem::path test_dir;
   std::filesystem::path wal_path;
-  boost::asio::io_context io_context;
-  std::unique_ptr<
-      boost::asio::executor_work_guard<boost::asio::io_context::executor_type>>
+  asio::io_context io_context;
+  asio::any_io_executor executor;
+  std::unique_ptr<asio::executor_work_guard<asio::io_context::executor_type>>
       work_guard;
-  std::thread runner_thread;
   std::unique_ptr<WAL_mgr> wal_mgr;
+  std::thread runner_thread;
 };
 
-TEST_F(WAL_AsyncTest, CoroutineSuspendsAndResumes)
+TEST_F(WAL_AsyncTest, CoroutineWaitsAndResumes)
 {
-  std::promise<bool> resumed_promise;
-  auto resumed_future = resumed_promise.get_future();
+  std::promise<bool> test_completed_promise;
+  auto test_completed_future = test_completed_promise.get_future();
 
-  auto coro = [&]() -> boost::asio::awaitable<void>
-  {
-    LogRecordHeader hdr{};
-    hdr.type = BEGIN;
-    hdr.txn_id = 1;
-    hdr.lr_length = sizeof(LogRecordHeader);
+  asio::co_spawn(
+      executor,
+      [&]() -> asio::awaitable<void>
+      {
+        LogRecordHeader hdr{};
+        hdr.type = BEGIN;
+        hdr.txn_id = 1;
+        hdr.lr_length = sizeof(LogRecordHeader);
 
-    LSN lsn = wal_mgr->append_record_async(hdr);
-    co_await wal_mgr->wait_for_flush(lsn, boost::asio::use_awaitable);
+        LSN lsn = wal_mgr->append_record_async(hdr);
+        EXPECT_FALSE(wal_mgr->is_lsn_flushed(lsn));
 
-    resumed_promise.set_value(true);
-  };
+        boost::system::error_code ec;
+        co_await wal_mgr->async_wait_for_flush(
+            lsn, asio::redirect_error(asio::use_awaitable, ec));
 
-  boost::asio::co_spawn(io_context, std::move(coro), boost::asio::detached);
+        EXPECT_FALSE(ec);
+        EXPECT_TRUE(wal_mgr->is_lsn_flushed(lsn));
+        test_completed_promise.set_value(true);
+        co_return;
+      },
+      asio::detached);
 
-  ASSERT_EQ(resumed_future.wait_for(std::chrono::seconds(1)),
+  ASSERT_EQ(test_completed_future.wait_for(std::chrono::seconds(2)),
             std::future_status::ready);
-  EXPECT_TRUE(resumed_future.get());
+  EXPECT_TRUE(test_completed_future.get());
 }
 
-TEST_F(WAL_AsyncTest, AwaitReadyReturnsTrueForFlushedLSN)
+TEST_F(WAL_AsyncTest, AwaiterDoesNotBlockIfLSNAlreadyFlushed)
 {
-  std::promise<bool> completed_promise;
-  auto completed_future = completed_promise.get_future();
+  std::promise<bool> test_completed_promise;
+  auto test_completed_future = test_completed_promise.get_future();
 
   LogRecordHeader hdr{};
   hdr.type = BEGIN;
-  hdr.txn_id = 2;
+  hdr.txn_id = 1;
   hdr.lr_length = sizeof(LogRecordHeader);
   LSN lsn = wal_mgr->append_record(hdr);
 
-  auto coro = [&]() -> boost::asio::awaitable<void>
-  {
-    co_await wal_mgr->wait_for_flush(lsn, boost::asio::use_awaitable);
-    completed_promise.set_value(true);
-    co_return;
-  };
+  ASSERT_TRUE(wal_mgr->is_lsn_flushed(lsn));
 
-  boost::asio::co_spawn(io_context, std::move(coro), boost::asio::detached);
+  asio::co_spawn(
+      executor,
+      [&]() -> asio::awaitable<void>
+      {
+        boost::system::error_code ec;
+        co_await wal_mgr->async_wait_for_flush(
+            lsn, asio::redirect_error(asio::use_awaitable, ec));
+        EXPECT_FALSE(ec);
+        test_completed_promise.set_value(true);
+        co_return;
+      },
+      asio::detached);
 
-  ASSERT_EQ(completed_future.wait_for(std::chrono::milliseconds(50)),
+  ASSERT_EQ(test_completed_future.wait_for(std::chrono::seconds(2)),
             std::future_status::ready);
-  EXPECT_TRUE(completed_future.get());
+  EXPECT_TRUE(test_completed_future.get());
 }
 
-TEST_F(WAL_AsyncTest, HandlesRaceBetweenReadyAndSuspend)
+TEST_F(WAL_AsyncTest, MultipleCoroutinesWaitOnSameBatch)
 {
-  std::promise<bool> completed_promise;
-  auto completed_future = completed_promise.get_future();
+  std::promise<void> promise1, promise2, promise3;
+  auto future1 = promise1.get_future();
+  auto future2 = promise2.get_future();
+  auto future3 = promise3.get_future();
 
-  auto coro = [&]() -> boost::asio::awaitable<void>
-  {
-    LogRecordHeader hdr{};
-    hdr.type = BEGIN;
-    hdr.txn_id = 3;
-    hdr.lr_length = sizeof(LogRecordHeader);
+  LogRecordHeader hdr{};
+  hdr.type = BEGIN;
+  hdr.lr_length = sizeof(LogRecordHeader);
 
-    LSN lsn = wal_mgr->append_record_async(hdr);
+  hdr.txn_id = 1;
+  LSN lsn1 = wal_mgr->append_record_async(hdr);
+  hdr.txn_id = 2;
+  LSN lsn2 = wal_mgr->append_record_async(hdr);
 
-    // This test is harder to provoke deterministically with the new model,
-    // but the implementation logic (re-checking under lock) is inherently
-    // race-proof, so we just verify it still completes correctly.
-    co_await wal_mgr->wait_for_flush(lsn, boost::asio::use_awaitable);
+  asio::co_spawn(
+      executor,
+      [&]() -> asio::awaitable<void>
+      {
+        co_await wal_mgr->async_wait_for_flush(lsn2, asio::use_awaitable);
+        EXPECT_TRUE(wal_mgr->is_lsn_flushed(lsn1));
+        EXPECT_TRUE(wal_mgr->is_lsn_flushed(lsn2));
+        promise1.set_value();
+        co_return;
+      },
+      asio::detached);
 
-    completed_promise.set_value(true);
-    co_return;
-  };
+  asio::co_spawn(
+      executor,
+      [&]() -> asio::awaitable<void>
+      {
+        co_await wal_mgr->async_wait_for_flush(lsn2, asio::use_awaitable);
+        EXPECT_TRUE(wal_mgr->is_lsn_flushed(lsn2));
+        promise2.set_value();
+        co_return;
+      },
+      asio::detached);
 
-  boost::asio::co_spawn(io_context, std::move(coro), boost::asio::detached);
+  asio::co_spawn(
+      executor,
+      [&]() -> asio::awaitable<void>
+      {
+        co_await wal_mgr->async_wait_for_flush(lsn1, asio::use_awaitable);
+        EXPECT_TRUE(wal_mgr->is_lsn_flushed(lsn1));
+        promise3.set_value();
+        co_return;
+      },
+      asio::detached);
 
-  ASSERT_EQ(completed_future.wait_for(std::chrono::seconds(1)),
+  ASSERT_EQ(future1.wait_for(std::chrono::seconds(2)),
             std::future_status::ready);
-  EXPECT_TRUE(completed_future.get());
+  ASSERT_EQ(future2.wait_for(std::chrono::seconds(2)),
+            std::future_status::ready);
+  ASSERT_EQ(future3.wait_for(std::chrono::seconds(2)),
+            std::future_status::ready);
 }

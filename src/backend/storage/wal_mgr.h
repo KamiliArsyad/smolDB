@@ -1,7 +1,9 @@
 #ifndef WAL_MGR_H
 #define WAL_MGR_H
 #include <boost/asio/any_io_executor.hpp>
+#include <boost/asio/async_result.hpp>
 #include <boost/asio/post.hpp>
+#include <boost/system/error_code.hpp>
 #include <condition_variable>
 #include <coroutine>
 #include <cstddef>
@@ -40,7 +42,6 @@ struct LogRecordHeader
   uint64_t txn_id;
   LR_TYPE type;
   uint32_t lr_length;  // Record length including the header
-  // Todo: add checksum
 };
 #pragma pack(pop)
 
@@ -51,39 +52,18 @@ struct UpdatePagePayload
   uint16_t length;
   std::byte data[];
 
-  /**
-   * @brief Allocate header + 2*length bytes in one go
-   * @param pid {in} the page id of the updated record.
-   * @param off {in} the offset within page of the updated record
-   * @param len {in} the length of the block updated
-   * @return A struct
-   */
   static UpdatePagePayload* create(uint32_t pid, uint16_t off, uint16_t len)
   {
-    // sizeof(header) + payload for bef+aft
     size_t total =
         sizeof(UpdatePagePayload) + size_t(len) * 2 * sizeof(std::byte);
     void* mem = operator new(total);
     return new (mem) UpdatePagePayload{pid, off, len};
   }
 
-  // convenience accessors
   const std::byte* bef() const { return data; }
   const std::byte* aft() const { return data + length; }
-
-  // intrusively serialize header + payload as raw bytes
-  template <class Archive>
-  void serialize(Archive& ar, unsigned /*ver*/)
-  {
-    ar & page_id & offset & length;
-    ar& boost::serialization::make_binary_object(data, length * 2);
-  }
 };
 
-// A CLR contains the standard update payload (the "undo" action)
-// plus the LSN of the next record to undo in the transaction chain.
-// This does NOT inherit from UpdatePagePayload to ensure the flexible
-// array member is the last member in the struct.
 struct CLR_Payload
 {
   uint32_t page_id;
@@ -113,34 +93,6 @@ struct LogRecordBatch
 class WAL_mgr
 {
  public:
-  // The C++20 Awaitable for waiting on an LSN to be flushed.
-  class WalFlushAwaiter
-  {
-   public:
-    WalFlushAwaiter(WAL_mgr* mgr, LSN lsn) noexcept : mgr_(mgr), lsn_(lsn) {}
-
-    bool await_ready() const noexcept { return mgr_->is_lsn_flushed(lsn_); }
-
-    bool await_suspend(std::coroutine_handle<> handle) noexcept
-    {
-      std::lock_guard lock(mgr_->waiters_mutex_);
-      // Re-check under lock to handle race where LSN was flushed
-      // between await_ready() and this call.
-      if (mgr_->is_lsn_flushed(lsn_))
-      {
-        return false;  // Don't suspend, continue immediately.
-      }
-      mgr_->waiters_.emplace(lsn_, handle);
-      return true;  // Suspend.
-    }
-
-    void await_resume() const noexcept {}
-
-   private:
-    WAL_mgr* mgr_;
-    LSN lsn_;
-  };
-
   explicit WAL_mgr(const std::filesystem::path& path,
                    boost::asio::any_io_executor executor);
   ~WAL_mgr();
@@ -150,17 +102,42 @@ class WAL_mgr
   WAL_mgr& operator=(const WAL_mgr&) = delete;
 
   // DEPRECATED: Will be removed in Phase 2.
-  // This is a blocking call that waits for the record to be durable.
   LSN append_record(LogRecordHeader& hdr, const void* payload = nullptr);
 
   // ASYNC API: Appends a record to the WAL buffer. Does NOT block.
   LSN append_record_async(LogRecordHeader& hdr, const void* payload = nullptr);
 
-  // ASYNC API: Returns an awaitable that completes when the given LSN is
-  // durable.
-  [[nodiscard]] WalFlushAwaiter wait_for_flush(LSN lsn)
+  // ASYNC API: Asynchronously waits for an LSN to be durable.
+  template <typename CompletionToken>
+  auto async_wait_for_flush(LSN lsn, CompletionToken&& token)
   {
-    return WalFlushAwaiter(this, lsn);
+    auto initiation = [this](auto&& completion_handler, LSN lsn_to_wait)
+    {
+      // Acquire lock before checking the condition.
+      std::lock_guard lock(waiters_mutex_);
+
+      // Re-check the condition while holding the lock.
+      if (is_lsn_flushed(lsn_to_wait))
+      {
+        // Post completion to the executor to avoid re-entrancy.
+        boost::asio::post(executor_,
+                          [handler = std::move(completion_handler)]() mutable
+                          { handler(boost::system::error_code{}); });
+        return;
+      }
+
+      // If not yet flushed, it's now safe to emplace the handler.
+      auto shared_handler =
+          std::make_shared<std::decay_t<decltype(completion_handler)>>(
+              std::move(completion_handler));
+
+      waiters_.emplace(lsn_to_wait, [shared_handler]() mutable
+                       { (*shared_handler)(boost::system::error_code{}); });
+    };
+
+    return boost::asio::async_initiate<CompletionToken,
+                                       void(boost::system::error_code)>(
+        initiation, token, lsn);
   }
 
   // Checks if a given LSN is durable (i.e., has been fsync'd to disk).
@@ -169,26 +146,15 @@ class WAL_mgr
     return lsn <= flushed_lsn_.load(std::memory_order_acquire);
   }
 
-  // We no longer implement recovery here. It's moved to RecoveryManager.
-  // TODO: REMOVE THIS AND THE FUNCTION BELOW IT. Kept for now for stable tests
   void recover(BufferPool& bfr_manager, const std::filesystem::path& path);
 
   void read_all_records_for_txn(
       uint64_t txn_id,
       std::vector<std::pair<LogRecordHeader, std::vector<char>>>& out);
 
-  // Reads the entire WAL file into memory. Useful for recovery and aborts.
-  // In the future, this would be more sophisticated (e.g., LSN->offset map).
   std::map<LSN, std::pair<LogRecordHeader, std::vector<char>>>
   read_all_records();
 
-  /**
-   * @brief Random-access fast lookup to find a WAL record.
-   * @param lsn {in} The LSN to look for.
-   * @param header {out} Header of the record.
-   * @param payload {out} The record payload.
-   * @return False iff the queried LSN is not found.
-   */
   bool get_record(LSN lsn, LogRecordHeader& header_out,
                   std::vector<char>& payload_out);
 
@@ -209,12 +175,10 @@ class WAL_mgr
   boost::asio::any_io_executor executor_;
 
   std::mutex general_mtx_;
-  // Mutex for the writer queue.
   std::mutex mtx_;
   std::condition_variable cv_;
   std::list<std::unique_ptr<LogRecordBatch>> write_queue_;
 
-  // Mutex needed to protect this: general_mtx_
   std::map<LSN, std::streamoff> lsn_to_offset_idx_;
 
   std::thread writer_thread_;
@@ -222,7 +186,7 @@ class WAL_mgr
 
   // --- State for async waiting ---
   std::mutex waiters_mutex_;
-  std::multimap<LSN, std::coroutine_handle<>> waiters_;
+  std::multimap<LSN, std::function<void()>> waiters_;
 
   // --- State for blocking append_record ---
   std::mutex flush_mutex_;
