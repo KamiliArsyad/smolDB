@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <boost/asio/io_context.hpp>
 #include <map>
 #include <optional>
 #include <random>
@@ -30,7 +31,7 @@ class AriesFuzzTest : public ::testing::Test
     schema.push_back({0, "id", Col_type::INT, false, {}});
 
     smoldb::DBConfig config{test_dir_};
-    auto db = std::make_unique<SmolDB>(config);
+    auto db = std::make_unique<SmolDB>(config, io_context_.get_executor());
     db->startup();
     db->create_table(1, table_name_, schema);
 
@@ -54,7 +55,7 @@ class AriesFuzzTest : public ::testing::Test
   void chaos_phase()
   {
     smoldb::DBConfig config(test_dir_);
-    auto db = std::make_unique<SmolDB>(config);
+    auto db = std::make_unique<SmolDB>(config, io_context_.get_executor());
     db->startup();
     Table<>* table = db->get_table(table_name_);
     Schema schema = table->get_schema();
@@ -134,7 +135,7 @@ class AriesFuzzTest : public ::testing::Test
   void verification_phase()
   {
     smoldb::DBConfig config{test_dir_};
-    auto db = std::make_unique<SmolDB>(config);
+    auto db = std::make_unique<SmolDB>(config, io_context_.get_executor());
     db->startup();
     Table<>* table = db->get_table(table_name_);
     ASSERT_NE(table, nullptr);
@@ -186,6 +187,7 @@ class AriesFuzzTest : public ::testing::Test
   CanonicalState canonical_state_;
 
   std::filesystem::path test_dir_;
+  boost::asio::io_context io_context_;
 };
 
 TEST_F(AriesFuzzTest, RecoverAfterChaos)

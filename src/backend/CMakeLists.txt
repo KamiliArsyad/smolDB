@@ -32,7 +32,7 @@ target_include_directories(backend_lib
 
 # Find necessary external packages.
 find_package(
-        Boost REQUIRED COMPONENTS serialization
+        Boost REQUIRED COMPONENTS serialization thread
 )
 
 # Link the backend library against its dependencies.
@@ -40,6 +40,7 @@ find_package(
 target_link_libraries(backend_lib
         PUBLIC
         Boost::serialization
+        Boost::thread
         storage_lib
         access_lib
         executor_lib

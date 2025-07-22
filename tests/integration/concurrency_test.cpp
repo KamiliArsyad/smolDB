@@ -1,33 +1,33 @@
 #include <gtest/gtest.h>
 
+#include <boost/asio/io_context.hpp>
 #include <future>
 #include <thread>
 
 #include "backend/smoldb.h"
 
-using namespace smoldb;
-
 class ConcurrencyTest : public ::testing::Test
 {
  protected:
+  boost::asio::io_context io_context_;
   void SetUp() override
   {
     test_dir = std::filesystem::temp_directory_path() / "concurrency_tests";
     std::filesystem::remove_all(test_dir);
     std::filesystem::create_directories(test_dir);
 
-    smoldb::DBConfig config{test_dir, BUFFER_SIZE_FOR_TEST};
-    db = std::make_unique<SmolDB>(config);
+    smoldb::DBConfig config{test_dir, smoldb::BUFFER_SIZE_FOR_TEST};
+    db = std::make_unique<smoldb::SmolDB>(config, io_context_.get_executor());
     db->startup();
 
     // Create a table with one row
-    Schema schema;
-    schema.push_back({0, "id", Col_type::INT, false, {}});
+    smoldb::Schema schema;
+    schema.push_back({0, "id", smoldb::Col_type::INT, false, {}});
     db->create_table(1, "test_table", schema);
 
-    TransactionID txn = db->begin_transaction();
-    Table<>* table = db->get_table(1);
-    Row row(schema);
+    smoldb::TransactionID txn = db->begin_transaction();
+    smoldb::Table<>* table = db->get_table(1);
+    smoldb::Row row(schema);
     row.set_value("id", 100);
     initial_rid_ = table->insert_row(txn, row);
     db->commit_transaction(txn);
@@ -41,18 +41,18 @@ class ConcurrencyTest : public ::testing::Test
   }
 
   std::filesystem::path test_dir;
-  std::unique_ptr<SmolDB> db;
-  RID initial_rid_;
+  std::unique_ptr<smoldb::SmolDB> db;
+  smoldb::RID initial_rid_;
 };
 
 // Test that two transactions can acquire shared locks on the same resource
 TEST_F(ConcurrencyTest, SharedLockCompatibility)
 {
-  Table<>* table = db->get_table(1);
-  Row out_row1, out_row2;
+  smoldb::Table<>* table = db->get_table(1);
+  smoldb::Row out_row1, out_row2;
 
-  TransactionID txn1 = db->begin_transaction();
-  TransactionID txn2 = db->begin_transaction();
+  smoldb::TransactionID txn1 = db->begin_transaction();
+  smoldb::TransactionID txn2 = db->begin_transaction();
 
   // Both should be able to get a shared lock without blocking
   ASSERT_TRUE(table->get_row(txn1, initial_rid_, out_row1));

@@ -1,6 +1,9 @@
 #ifndef WAL_MGR_H
 #define WAL_MGR_H
+#include <boost/asio/any_io_executor.hpp>
+#include <boost/asio/post.hpp>
 #include <condition_variable>
+#include <coroutine>
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
@@ -105,26 +108,66 @@ struct CLR_Payload
 struct LogRecordBatch
 {
   std::vector<char> data;
-  std::promise<void> flushed;
 };
 
 class WAL_mgr
 {
  public:
-  explicit WAL_mgr(const std::filesystem::path& path);
+  // The C++20 Awaitable for waiting on an LSN to be flushed.
+  class WalFlushAwaiter
+  {
+   public:
+    WalFlushAwaiter(WAL_mgr* mgr, LSN lsn) noexcept : mgr_(mgr), lsn_(lsn) {}
+
+    bool await_ready() const noexcept { return mgr_->is_lsn_flushed(lsn_); }
+
+    bool await_suspend(std::coroutine_handle<> handle) noexcept
+    {
+      std::lock_guard lock(mgr_->waiters_mutex_);
+      // Re-check under lock to handle race where LSN was flushed
+      // between await_ready() and this call.
+      if (mgr_->is_lsn_flushed(lsn_))
+      {
+        return false;  // Don't suspend, continue immediately.
+      }
+      mgr_->waiters_.emplace(lsn_, handle);
+      return true;  // Suspend.
+    }
+
+    void await_resume() const noexcept {}
+
+   private:
+    WAL_mgr* mgr_;
+    LSN lsn_;
+  };
+
+  explicit WAL_mgr(const std::filesystem::path& path,
+                   boost::asio::any_io_executor executor);
   ~WAL_mgr();
 
   // No copy/move
   WAL_mgr(const WAL_mgr&) = delete;
   WAL_mgr& operator=(const WAL_mgr&) = delete;
 
-  /**
-   * @brief Appends a log record to the WAL file. This is thread-safe.
-   * @param hdr {in} The header of the log record.
-   * @param payload {in} The log record payload.
-   * @return The LSN of the log.
-   */
+  // DEPRECATED: Will be removed in Phase 2.
+  // This is a blocking call that waits for the record to be durable.
   LSN append_record(LogRecordHeader& hdr, const void* payload = nullptr);
+
+  // ASYNC API: Appends a record to the WAL buffer. Does NOT block.
+  LSN append_record_async(LogRecordHeader& hdr, const void* payload = nullptr);
+
+  // ASYNC API: Returns an awaitable that completes when the given LSN is
+  // durable.
+  [[nodiscard]] WalFlushAwaiter wait_for_flush(LSN lsn)
+  {
+    return WalFlushAwaiter(this, lsn);
+  }
+
+  // Checks if a given LSN is durable (i.e., has been fsync'd to disk).
+  bool is_lsn_flushed(LSN lsn) const
+  {
+    return lsn <= flushed_lsn_.load(std::memory_order_acquire);
+  }
 
   // We no longer implement recovery here. It's moved to RecoveryManager.
   // TODO: REMOVE THIS AND THE FUNCTION BELOW IT. Kept for now for stable tests
@@ -163,6 +206,8 @@ class WAL_mgr
   std::atomic<LSN> next_lsn_ = 1;
   std::atomic<LSN> flushed_lsn_ = 0;
 
+  boost::asio::any_io_executor executor_;
+
   std::mutex general_mtx_;
   // Mutex for the writer queue.
   std::mutex mtx_;
@@ -174,6 +219,14 @@ class WAL_mgr
 
   std::thread writer_thread_;
   std::atomic<bool> stop_writer_ = false;
+
+  // --- State for async waiting ---
+  std::mutex waiters_mutex_;
+  std::multimap<LSN, std::coroutine_handle<>> waiters_;
+
+  // --- State for blocking append_record ---
+  std::mutex flush_mutex_;
+  std::condition_variable flush_cv_;
 };
 
 }  // namespace smoldb

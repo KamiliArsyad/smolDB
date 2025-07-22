@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <boost/asio/io_context.hpp>
+
 #include "backend/smoldb.h"
 
 using namespace smoldb;
@@ -14,7 +16,7 @@ class TransactionTest : public ::testing::Test
     std::filesystem::create_directories(test_dir);
 
     smoldb::DBConfig config(test_dir, BUFFER_SIZE_FOR_TEST);
-    db = std::make_unique<SmolDB>(config);
+    db = std::make_unique<SmolDB>(config, io_context_.get_executor());
     db->startup();
 
     // Create a simple table for testing
@@ -32,6 +34,7 @@ class TransactionTest : public ::testing::Test
 
   std::filesystem::path test_dir;
   std::unique_ptr<SmolDB> db;
+  boost::asio::io_context io_context_;
 };
 
 TEST_F(TransactionTest, CommitMakesChangesVisible)

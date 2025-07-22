@@ -13,6 +13,7 @@
 
 #define private public
 #include <barrier>
+#include <boost/asio/io_context.hpp>
 
 #include "backend/smoldb.h"
 #undef private
@@ -238,6 +239,7 @@ class DMLAtomicityHarness
 class AtomicityFuzzTest : public ::testing::Test
 {
  protected:
+  boost::asio::io_context io_context_;
   void SetUp() override
   {
     test_dir = std::filesystem::temp_directory_path() / "atomicity_fuzz_test";
@@ -246,7 +248,7 @@ class AtomicityFuzzTest : public ::testing::Test
 
     // Use a small buffer pool to increase pressure
     smoldb::DBConfig config{test_dir, 16};
-    db = std::make_unique<SmolDB>(config);
+    db = std::make_unique<SmolDB>(config, io_context_.get_executor());
     db->startup();
 
     // Create a table with a few rows to work on
@@ -355,7 +357,8 @@ TEST(ConcurrencyFuzzTest, HammerTheBufferPool)
   std::filesystem::create_directories(test_dir);
 
   smoldb::DBConfig config{test_dir, 32};
-  SmolDB db(config);
+  boost::asio::io_context io_context_;
+  SmolDB db(config, io_context_.get_executor());
   db.startup();
 
   std::atomic<bool> stop_flag = false;
@@ -407,6 +410,7 @@ TEST(ConcurrencyFuzzTest, HammerTheBufferPool)
 class HeapFilePageRaceTest : public ::testing::Test
 {
  protected:
+  boost::asio::io_context io_context_;
   void SetUp() override
   {
     test_dir =
@@ -415,7 +419,7 @@ class HeapFilePageRaceTest : public ::testing::Test
     std::filesystem::create_directories(test_dir);
 
     smoldb::DBConfig config{test_dir, 16};
-    db = std::make_unique<SmolDB>(config);
+    db = std::make_unique<SmolDB>(config, io_context_.get_executor());
     db->startup();
     lock_mgr = db->lock_manager_.get();
     txn_mgr = db->txn_manager_.get();

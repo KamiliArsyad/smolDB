@@ -17,7 +17,7 @@ OUT=${3:-amalgamated.cpp}
 
 # Depth-limited DFS using `find`
 find "$ROOT" -mindepth 1 -maxdepth "$DEPTH" \
-     -type f \( -name '*.h' -o -name '*.cpp' -o -name 'CMakeLists.txt' -o -name '*.proto' \) \
+     -type f \( -name '*.h' -o -name '*.cpp' -o -name '*.proto' \) \
      | sort | while IFS= read -r F; do
         REL=${F#"$ROOT"/}
         printf '\n// ===== %s =====\n\n' "$REL" >> "$OUT"

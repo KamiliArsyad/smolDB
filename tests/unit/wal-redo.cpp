@@ -3,6 +3,8 @@
 #include <cstring>
 
 #define private public
+#include <boost/asio/io_context.hpp>
+
 #include "bfrpl.h"
 #include "dsk_mgr.h"
 #include "smoldb.h"
@@ -59,7 +61,8 @@ TEST(WAL_mgr, AppendRecover)
   auto db_path = tmpfile("wal_append_recover.db");
 
   // 1. Build a WAL with a single UPDATE
-  WAL_mgr wal(wal_path);
+  boost::asio::io_context io_context_;
+  WAL_mgr wal(wal_path, io_context_.get_executor());
 
   constexpr PageID kPid = 3;
   constexpr uint32_t kOff = 40;
@@ -72,7 +75,8 @@ TEST(WAL_mgr, AppendRecover)
   wal.flush_to_lsn(hdr.lsn);
 
   // 2. Simulate restart: open _new_ WAL_mgr + disk + buffer-pool and recover.
-  WAL_mgr wal_replayer(wal_path);  // read-only role
+  boost::asio::io_context io_context;
+  WAL_mgr wal_replayer(wal_path, io_context.get_executor());  // read-only role
   Disk_mgr disk(db_path);
   BufferPool pool(BUFFER_SIZE_FOR_TEST, &disk, &wal_replayer);
 
@@ -89,7 +93,8 @@ TEST(WAL_mgr, AppendRecover)
  */
 TEST(WAL_mgr, MonotonicLSN)
 {
-  WAL_mgr wal(tmpfile("wal_monotonic.log"));
+  boost::asio::io_context io_context;
+  WAL_mgr wal(tmpfile("wal_monotonic.log"), io_context.get_executor());
 
   std::vector<char> buf(1, 0);
   LogRecordHeader h1{};
@@ -108,7 +113,8 @@ TEST(WAL_mgr, MonotonicLSN)
 TEST(WAL_mgr, LastWriteWins)
 {
   auto wal_path = tmpfile("wal_last_write_wins.log");
-  WAL_mgr wal(wal_path);
+  boost::asio::io_context io_context;
+  WAL_mgr wal(wal_path, io_context.get_executor());
 
   constexpr PageID kPid = 1;
   constexpr uint32_t kOff = 0;
@@ -148,7 +154,8 @@ TEST(WAL_mgr, GetRecordFindsWrittenRecord)
   LSN lsn1, lsn2;
 
   {
-    WAL_mgr wal(wal_path);
+    boost::asio::io_context io_context;
+    WAL_mgr wal(wal_path, io_context.get_executor());
     auto h1 = make_update(1, 10, 0, sizeof(v1), &v1, b1);
     auto h2 = make_update(1, 11, 8, sizeof(v2), &v2, b2);
     lsn1 = wal.append_record(h1, b1.data());
@@ -156,7 +163,8 @@ TEST(WAL_mgr, GetRecordFindsWrittenRecord)
   }  // WAL_mgr is destroyed.
 
   // Phase 2: Create new WAL_mgr; its constructor should build the index.
-  WAL_mgr wal_reader(wal_path);
+  boost::asio::io_context io_context;
+  WAL_mgr wal_reader(wal_path, io_context.get_executor());
   LogRecordHeader hdr_out;
   std::vector<char> payload_out;
 
@@ -186,7 +194,8 @@ TEST(WAL_mgr, IndexIsRebuiltOnStartup)
   auto wal_path = tmpfile("wal_index_rebuild.log");
   LSN lsn1, lsn2, lsn3;
   {
-    WAL_mgr wal(wal_path);
+    boost::asio::io_context io_context;
+    WAL_mgr wal(wal_path, io_context.get_executor());
     std::vector<char> dummy_buf(1);
     LogRecordHeader h{};
     h.type = BEGIN;
@@ -199,7 +208,8 @@ TEST(WAL_mgr, IndexIsRebuiltOnStartup)
   }  // Destructor runs, flushing data to disk.
 
   // Create a new instance. This triggers the constructor's index rebuild logic.
-  WAL_mgr wal_reloaded(wal_path);
+  boost::asio::io_context io_context;
+  WAL_mgr wal_reloaded(wal_path, io_context.get_executor());
 
   // We can inspect the private member because of `#define private public`
   ASSERT_EQ(wal_reloaded.lsn_to_offset_idx_.size(), 3);
@@ -224,7 +234,8 @@ TEST(WAL_mgr, GetRecordHandlesVaryingPayloadSizes)
   LSN lsn_small, lsn_large;
 
   {
-    WAL_mgr wal(wal_path);
+    boost::asio::io_context io_context;
+    WAL_mgr wal(wal_path, io_context.get_executor());
     auto h_small = make_update(1, 1, 0, sizeof(val_small), &val_small, b_small);
     auto h_large =
         make_update(1, 2, 0, val_large.size(), val_large.data(), b_large);
@@ -232,7 +243,8 @@ TEST(WAL_mgr, GetRecordHandlesVaryingPayloadSizes)
     lsn_large = wal.append_record(h_large, b_large.data());
   }
 
-  WAL_mgr wal_reader(wal_path);
+  boost::asio::io_context io_context;
+  WAL_mgr wal_reader(wal_path, io_context.get_executor());
   LogRecordHeader hdr_out;
   std::vector<char> payload_out;
 

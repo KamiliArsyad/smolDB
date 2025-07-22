@@ -1,14 +1,15 @@
 #include <gtest/gtest.h>
 
+#include <boost/asio/io_context.hpp>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <vector>
 
-#include "idx.h"
 #include "access.h"
 #include "executor/lock_mgr.h"
 #include "executor/trx_mgr.h"
+#include "idx.h"
 #include "mock_heapfile.h"
 #include "storage/bfrpl.h"    // Needed for the real BufferPool
 #include "storage/dsk_mgr.h"  // Needed for the real BufferPool
@@ -29,7 +30,8 @@ class AccessTest : public testing::Test
     dummy_wal_path_ = test_dir / "dummy.wal";
 
     disk_mgr_ = std::make_unique<Disk_mgr>(dummy_db_path_);
-    wal_mgr_ = std::make_unique<WAL_mgr>(dummy_wal_path_);
+    wal_mgr_ =
+        std::make_unique<WAL_mgr>(dummy_wal_path_, io_context_.get_executor());
     buffer_pool_ =
         std::make_unique<BufferPool>(16, disk_mgr_.get(), wal_mgr_.get());
     lock_mgr_ = std::make_unique<LockManager>();
@@ -53,6 +55,8 @@ class AccessTest : public testing::Test
   std::unique_ptr<LockManager> lock_mgr_;
   std::unique_ptr<WAL_mgr> wal_mgr_;
   std::unique_ptr<TransactionManager> txn_mgr_;
+
+  boost::asio::io_context io_context_;
 };
 
 TEST_F(AccessTest, BasicTableInsert)

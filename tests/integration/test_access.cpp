@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <boost/asio/io_context.hpp>
 #include <boost/variant.hpp>
 #include <chrono>
 #include <filesystem>
@@ -42,7 +43,7 @@ class TableTest : public ::testing::Test
     auto dummy_wal_path = test_dir_ / "dummy.wal";
 
     disk_mgr_ = std::make_unique<Disk_mgr>(dummy_db_path);
-    wal_mgr_ = std::make_unique<WAL_mgr>(dummy_wal_path);
+    wal_mgr_ = std::make_unique<WAL_mgr>(dummy_wal_path, io_context_.get_executor());
     buffer_pool_ =
         std::make_unique<BufferPool>(16, disk_mgr_.get(), wal_mgr_.get());
     lock_mgr_ = std::make_unique<LockManager>();
@@ -58,6 +59,7 @@ class TableTest : public ::testing::Test
   std::unique_ptr<BufferPool> buffer_pool_;
   std::unique_ptr<LockManager> lock_mgr_;
   std::unique_ptr<TransactionManager> txn_mgr_;
+  boost::asio::io_context io_context_;
 };
 
 TEST_F(TableTest, InsertScanSingleRow)
@@ -95,7 +97,7 @@ class CatalogTest : public ::testing::Test
     std::filesystem::create_directories(test_dir);
 
     smoldb::DBConfig config{test_dir, BUFFER_SIZE_FOR_TEST};
-    db = std::make_unique<SmolDB>(config);
+    db = std::make_unique<SmolDB>(config, io_context_.get_executor());
     db->startup();
   }
 
@@ -108,6 +110,7 @@ class CatalogTest : public ::testing::Test
 
   std::filesystem::path test_dir;
   std::unique_ptr<SmolDB> db;
+  boost::asio::io_context io_context_;
 };
 
 TEST_F(CatalogTest, CreateGetList)
@@ -151,7 +154,7 @@ TEST_F(CatalogTest, PersistAndReload)
 
   // --- Simulate restart ---
   smoldb::DBConfig config(test_dir, BUFFER_SIZE_FOR_TEST);
-  auto new_db = std::make_unique<SmolDB>(config);
+  auto new_db = std::make_unique<SmolDB>(config, io_context_.get_executor());
   new_db->startup();
 
   auto* reloaded_table = new_db->get_table(22);

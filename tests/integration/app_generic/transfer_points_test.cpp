@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <barrier>
+#include <boost/asio/io_context.hpp>
 #include <thread>
 
 #include "backend/proc/proc.h"
@@ -80,7 +81,7 @@ class TransferPointsTest : public ::testing::Test
 
     smoldb::DBConfig config;
     config.db_directory = test_dir;
-    db = std::make_unique<SmolDB>(config);
+    db = std::make_unique<SmolDB>(config, io_context_.get_executor());
     db->startup();
 
     // Setup schema and initial data
@@ -114,6 +115,7 @@ class TransferPointsTest : public ::testing::Test
 
   std::filesystem::path test_dir;
   std::unique_ptr<SmolDB> db;
+  boost::asio::io_context io_context_;
 };
 
 TEST_F(TransferPointsTest, SuccessfulTransfer)

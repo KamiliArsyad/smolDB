@@ -1,6 +1,7 @@
 #ifndef SMOLDB_PROC_MGR_H
 #define SMOLDB_PROC_MGR_H
 
+#include <boost/asio/any_io_executor.hpp>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -24,7 +25,8 @@ class Catalog;
 class ProcedureManager
 {
  public:
-  ProcedureManager(TransactionManager* txn_manager, Catalog* catalog);
+  ProcedureManager(TransactionManager* txn_manager, Catalog* catalog,
+                   boost::asio::any_io_executor executor);
 
   /**
    * @brief Registers a procedure with the engine, taking ownership of it.
@@ -50,6 +52,7 @@ class ProcedureManager
  private:
   TransactionManager* txn_manager_;
   Catalog* catalog_;
+  boost::asio::any_io_executor executor_;
   std::unordered_map<std::string, std::unique_ptr<TransactionProcedure>>
       procedures_;
 };

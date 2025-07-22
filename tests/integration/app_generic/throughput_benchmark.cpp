@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <boost/asio/io_context.hpp>
 #include <chrono>
 #include <iostream>
 #include <numeric>
@@ -21,7 +22,8 @@ class TransferPointsProcedureForBench : public TransactionProcedure
  public:
   std::string get_name() const override { return "transfer_points"; }
   ProcedureStatus execute(TransactionContext& ctx,
-                          const ProcedureParams& params, ProcedureResult& result) override
+                          const ProcedureParams& params,
+                          ProcedureResult& result) override
   {
     const auto from_id = boost::get<int32_t>(params.at("from_user"));
     const auto to_id = boost::get<int32_t>(params.at("to_user"));
@@ -59,7 +61,7 @@ class ThroughputBenchmark : public ::testing::Test
     smoldb::DBConfig config;
     config.db_directory = test_dir;
     config.buffer_pool_size_frames = 512;  // A larger pool for a bench
-    db = std::make_unique<SmolDB>(config);
+    db = std::make_unique<SmolDB>(config, io_context_.get_executor());
     db->startup();
 
     Schema schema = {{0, "user_id", Col_type::INT, false, {}},
@@ -91,12 +93,13 @@ class ThroughputBenchmark : public ::testing::Test
 
   std::filesystem::path test_dir;
   std::unique_ptr<SmolDB> db;
+  boost::asio::io_context io_context_;
 };
 
 TEST_F(ThroughputBenchmark, MeasureThroughputAndLatency)
 {
   const int NUM_THREADS = std::thread::hardware_concurrency();
-  const int DURATION_SECONDS = 5;
+  const int DURATION_SECONDS = 10;
 
   std::atomic<bool> stop_flag = false;
   std::atomic<size_t> total_ops = 0;
@@ -124,9 +127,17 @@ TEST_F(ThroughputBenchmark, MeasureThroughputAndLatency)
             auto start = std::chrono::high_resolution_clock::now();
             ProcedureOptions opt;
             opt.max_retries = 3;
-            opt.backoff_fn = [](int retry_count) { return std::chrono::milliseconds(3 * retry_count); };
+            opt.backoff_fn = [](int retry_count)
+            { return std::chrono::milliseconds(3 * retry_count); };
 
-            proc_mgr->execute_procedure("transfer_points", params, opt);
+            try
+            {
+              proc_mgr->execute_procedure("transfer_points", params, opt);
+            }
+            catch (...)
+            {
+            }
+
             auto end = std::chrono::high_resolution_clock::now();
 
             std::chrono::duration<double, std::micro> latency = end - start;

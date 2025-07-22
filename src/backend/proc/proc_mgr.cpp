@@ -7,8 +7,11 @@
 using namespace smoldb;
 
 ProcedureManager::ProcedureManager(TransactionManager* txn_manager,
-                                   Catalog* catalog)
-    : txn_manager_(txn_manager), catalog_(catalog)
+                                   Catalog* catalog,
+                                   boost::asio::any_io_executor executor)
+    : txn_manager_(txn_manager),
+      catalog_(catalog),
+      executor_(std::move(executor))
 {
   assert(txn_manager_ != nullptr);
   assert(catalog_ != nullptr);

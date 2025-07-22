@@ -1,6 +1,7 @@
 #include <grpcpp/grpcpp.h>
 #include <gtest/gtest.h>
 
+#include <boost/asio/io_context.hpp>
 #include <thread>
 
 #include "backend/smoldb.h"
@@ -59,7 +60,8 @@ class GrpcTest : public ::testing::Test
     std::filesystem::create_directories(test_dir_);
 
     smoldb::DBConfig db_config{test_dir_};
-    db_ = std::make_unique<smoldb::SmolDB>(db_config);
+    db_ =
+        std::make_unique<smoldb::SmolDB>(db_config, io_context_.get_executor());
     db_->startup();
     db_->get_procedure_manager()->register_procedure(
         std::make_unique<TransferPointsTestProc>());
@@ -109,6 +111,7 @@ class GrpcTest : public ::testing::Test
   std::unique_ptr<grpc::Server> server_;
   std::thread server_thread_;
   std::unique_ptr<smoldb::rpc::SmolDBService::Stub> stub_;
+  boost::asio::io_context io_context_;
 };
 
 TEST_F(GrpcTest, SuccessfulProcedureCall)

@@ -8,7 +8,9 @@
 
 using namespace smoldb;
 
-WAL_mgr::WAL_mgr(const std::filesystem::path& path) : path_(path)
+WAL_mgr::WAL_mgr(const std::filesystem::path& path,
+                 boost::asio::any_io_executor executor)
+    : path_(path), executor_(std::move(executor))
 {
   // To be safe, we're locking the WAL.
   std::scoped_lock lock(general_mtx_);
@@ -67,6 +69,7 @@ WAL_mgr::~WAL_mgr()
 void WAL_mgr::writer_thread_main()
 {
   std::list<std::unique_ptr<LogRecordBatch>> local_queue;
+  LSN max_lsn_in_batch = 0;
 
   while (true)
   {
@@ -85,35 +88,62 @@ void WAL_mgr::writer_thread_main()
 
     if (!local_queue.empty())
     {
-      /**
-       * We can be assured that this won't cause a deadlock as the only other
-       * possible holder of `general_mtx_` is `read_all_records_for_txn` which
-       * does not wait for any other mutex.
-       */
-      std::scoped_lock lock(general_mtx_);  // Lock before writing to the file
-      for (const auto& batch : local_queue)
+      max_lsn_in_batch = 0;
       {
-        std::streamoff offset = wal_stream_.tellp();
-
-        const auto* hdr =
-            reinterpret_cast<const LogRecordHeader*>(batch->data.data());
-        lsn_to_offset_idx_[hdr->lsn] = offset;
-
-        wal_stream_.write(reinterpret_cast<const std::ostream::char_type*>(hdr),
-                          batch->data.size());
+        std::scoped_lock lock(general_mtx_);  // Lock before writing to the file
+        for (const auto& batch : local_queue)
+        {
+          std::streamoff offset = wal_stream_.tellp();
+          const auto* hdr =
+              reinterpret_cast<const LogRecordHeader*>(batch->data.data());
+          lsn_to_offset_idx_[hdr->lsn] = offset;
+          max_lsn_in_batch = std::max(max_lsn_in_batch, hdr->lsn);
+          wal_stream_.write(
+              reinterpret_cast<const std::ostream::char_type*>(hdr),
+              batch->data.size());
+        }
+        wal_stream_.flush();
       }
-      wal_stream_.flush();
 
-      for (auto& batch : local_queue)
+      // Update the flushed LSN. This MUST be visible before waking anyone.
+      flushed_lsn_.store(max_lsn_in_batch, std::memory_order_release);
+
+      // Resume coroutines.
+      std::vector<std::coroutine_handle<>> handles_to_resume;
       {
-        batch->flushed.set_value();
+        std::lock_guard lock(waiters_mutex_);
+        auto range_end = waiters_.upper_bound(max_lsn_in_batch);
+        for (auto it = waiters_.begin(); it != range_end; ++it)
+        {
+          handles_to_resume.push_back(it->second);
+        }
+        waiters_.erase(waiters_.begin(), range_end);
       }
+      for (auto handle : handles_to_resume)
+      {
+        boost::asio::post(executor_, [handle] { handle.resume(); });
+      }
+
+      // Notify any blocking threads.
+      {
+        std::lock_guard lock(flush_mutex_);
+        flush_cv_.notify_all();
+      }
+
       local_queue.clear();
     }
   }
 }
 
 LSN WAL_mgr::append_record(LogRecordHeader& hdr, const void* payload)
+{
+  LSN lsn = append_record_async(hdr, payload);
+  std::unique_lock lock(flush_mutex_);
+  flush_cv_.wait(lock, [&] { return is_lsn_flushed(lsn); });
+  return lsn;
+}
+
+LSN WAL_mgr::append_record_async(LogRecordHeader& hdr, const void* payload)
 {
   hdr.lsn = next_lsn_.fetch_add(1);
 
@@ -127,18 +157,11 @@ LSN WAL_mgr::append_record(LogRecordHeader& hdr, const void* payload)
     std::memcpy(batch->data.data() + sizeof(hdr), payload, payload_size);
   }
 
-  auto future = batch->flushed.get_future();
-
   {
     std::scoped_lock<std::mutex> lock(mtx_);
     write_queue_.push_back(std::move(batch));
   }
-
   cv_.notify_one();
-
-  // Wait for the writer thread to flush this record to disk
-  future.wait();
-  flushed_lsn_.store(hdr.lsn);
 
   return hdr.lsn;
 }

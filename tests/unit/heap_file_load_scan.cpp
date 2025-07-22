@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include <boost/asio/io_context.hpp>
 #include <filesystem>
 #include <numeric>
 #include <vector>
@@ -29,7 +30,7 @@ class HeapFileTest : public ::testing::Test
     std::remove(wal_path.c_str());
 
     disk_mgr = std::make_unique<Disk_mgr>(db_path);
-    wal_mgr = std::make_unique<WAL_mgr>(wal_path);
+    wal_mgr = std::make_unique<WAL_mgr>(wal_path, io_context_.get_executor());
     buffer_pool = std::make_unique<BufferPool>(BUFFER_SIZE_FOR_TEST,
                                                disk_mgr.get(), wal_mgr.get());
     lock_mgr = std::make_unique<LockManager>();
@@ -56,6 +57,8 @@ class HeapFileTest : public ::testing::Test
   std::unique_ptr<BufferPool> buffer_pool;
   std::unique_ptr<LockManager> lock_mgr;
   std::unique_ptr<TransactionManager> txn_mgr;
+
+  boost::asio::io_context io_context_;
 };
 
 TEST_F(HeapFileTest, AppendAndGet)

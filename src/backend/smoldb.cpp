@@ -8,8 +8,9 @@
 
 using namespace smoldb;
 
-SmolDB::SmolDB(const smoldb::DBConfig& config)
-    : db_directory_(config.db_directory)
+SmolDB::SmolDB(const smoldb::DBConfig& config,
+               boost::asio::any_io_executor executor)
+    : db_directory_(config.db_directory), executor_(std::move(executor))
 {
   if (!std::filesystem::exists(db_directory_))
   {
@@ -22,15 +23,15 @@ SmolDB::SmolDB(const smoldb::DBConfig& config)
 
   // All managers are created here, and only here. This is critical for tests.
   disk_mgr_ = std::make_unique<Disk_mgr>(db_file_path_);
-  wal_mgr_ = std::make_unique<WAL_mgr>(wal_file_path_);
+  wal_mgr_ = std::make_unique<WAL_mgr>(wal_file_path_, executor_);
   buffer_pool_ = std::make_unique<BufferPool>(config.buffer_pool_size_frames,
                                               disk_mgr_.get(), wal_mgr_.get());
   lock_manager_ = std::make_unique<LockManager>();
   txn_manager_ = std::make_unique<TransactionManager>(
       lock_manager_.get(), wal_mgr_.get(), buffer_pool_.get());
   catalog_ = std::make_unique<Catalog>();
-  proc_manager_ =
-      std::make_unique<ProcedureManager>(txn_manager_.get(), catalog_.get());
+  proc_manager_ = std::make_unique<ProcedureManager>(txn_manager_.get(),
+                                                     catalog_.get(), executor_);
 }
 
 SmolDB::~SmolDB()
