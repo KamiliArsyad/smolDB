@@ -66,6 +66,8 @@ class ThroughputBenchmark : public ::testing::Test
 
     smoldb::DBConfig config;
     config.db_directory = test_dir;
+    config.buffer_pool_shard_count = 128;
+    config.lock_manager_shard_count = 128;
     config.buffer_pool_size_frames = 512;  // A larger pool for a bench
     db = std::make_unique<SmolDB>(config, io_context_.get_executor());
     db->startup();
@@ -247,7 +249,6 @@ TEST_F(ThroughputBenchmark, PureAsyncThroughput)
       {
         ProcedureManager* proc_mgr = db->get_procedure_manager();
 
-        auto start_time = std::chrono::high_resolution_clock::now();
 
         // --- Worker Coroutine Logic --
         auto worker = [&]() -> asio::awaitable<void>
@@ -286,6 +287,7 @@ TEST_F(ThroughputBenchmark, PureAsyncThroughput)
                                             asio::deferred))>
             tasks;
 
+        auto start_time = std::chrono::high_resolution_clock::now();
         for (int i = 0; i < NUM_CONCURRENT_WORKERS; ++i)
           tasks.push_back(
               asio::co_spawn(io_context_, worker(), asio::deferred));

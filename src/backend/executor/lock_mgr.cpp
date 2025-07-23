@@ -6,8 +6,8 @@
 
 using namespace smoldb;
 
-LockManager::LockManager()
-    : shard_count_(std::thread::hardware_concurrency()),
+LockManager::LockManager(size_t shard_count)
+    : shard_count_(shard_count),
       lock_timeout_(100)  // 100ms timeout for deadlock prevention
 {
   shards_.resize(shard_count_);
