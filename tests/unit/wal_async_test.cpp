@@ -69,12 +69,9 @@ TEST_F(WAL_AsyncTest, CoroutineWaitsAndResumes)
       executor,
       [&]() -> asio::awaitable<void>
       {
-        LogRecordHeader hdr{};
-        hdr.type = BEGIN;
-        hdr.txn_id = 1;
-        hdr.lr_length = sizeof(LogRecordHeader);
+        auto b = wal_mgr->make_batch(BEGIN, 1, 0, 0);
 
-        LSN lsn = wal_mgr->append_record_async(hdr);
+        LSN lsn = wal_mgr->append_record_async(b.done());
         EXPECT_FALSE(wal_mgr->is_lsn_flushed(lsn));
 
         boost::system::error_code ec;
@@ -131,14 +128,11 @@ TEST_F(WAL_AsyncTest, MultipleCoroutinesWaitOnSameBatch)
   auto future2 = promise2.get_future();
   auto future3 = promise3.get_future();
 
-  LogRecordHeader hdr{};
-  hdr.type = BEGIN;
-  hdr.lr_length = sizeof(LogRecordHeader);
+  auto b = wal_mgr->make_batch(BEGIN, 1, 0, 0);
+  auto b2 = wal_mgr->make_batch(BEGIN, 2, 0, 0);
 
-  hdr.txn_id = 1;
-  LSN lsn1 = wal_mgr->append_record_async(hdr);
-  hdr.txn_id = 2;
-  LSN lsn2 = wal_mgr->append_record_async(hdr);
+  LSN lsn1 = wal_mgr->append_record_async(b.done());
+  LSN lsn2 = wal_mgr->append_record_async(b2.done());
 
   asio::co_spawn(
       executor,

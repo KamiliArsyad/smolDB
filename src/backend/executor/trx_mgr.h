@@ -2,6 +2,7 @@
 #define TRANSACTION_MANAGER_H
 
 #include <atomic>
+#include <boost/asio/awaitable.hpp>
 #include <memory>
 #include <mutex>
 #include <unordered_map>
@@ -41,6 +42,20 @@ class TransactionManager
    * @param txn_id The ID of the transaction to abort.
    */
   void abort(TransactionID txn_id);
+
+  /**
+   * @brief Asynchronously commits a transaction.
+   * @param txn_id The ID of the transaction to commit.
+   * @return An awaitable that completes when the commit is durable.
+   */
+  boost::asio::awaitable<void> async_commit(TransactionID txn_id);
+
+  /**
+   * @brief Asynchronously aborts a transaction.
+   * @param txn_id The ID of the transaction to abort.
+   * @return An awaitable that completes when the abort is durable.
+   */
+  boost::asio::awaitable<void> async_abort(TransactionID txn_id);
 
   /**
    * @brief Retrieves a pointer to an active transaction.

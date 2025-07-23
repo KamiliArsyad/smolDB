@@ -120,34 +120,42 @@ void WAL_mgr::writer_thread_main()
   }
 }
 
-LSN WAL_mgr::append_record_async(LogRecordHeader& hdr, const void* payload)
+LSN WAL_mgr::append_record_async(std::unique_ptr<LogRecordBatch>&& batch)
 {
-  hdr.lsn = next_lsn_.fetch_add(1);
-
-  auto batch = std::make_unique<LogRecordBatch>();
-  size_t payload_size = hdr.lr_length - sizeof(hdr);
-  batch->data.resize(sizeof(hdr) + payload_size);
-
-  std::memcpy(batch->data.data(), &hdr, sizeof(hdr));
-  if (payload)
-  {
-    std::memcpy(batch->data.data() + sizeof(hdr), payload, payload_size);
-  }
+  auto* hdr = reinterpret_cast<LogRecordHeader*>(batch->data.data());
+  LSN reserved_lsn = next_lsn_.fetch_add(1);
+  hdr->lsn = reserved_lsn;
 
   {
     std::scoped_lock<std::mutex> lock(mtx_);
     write_queue_.push_back(std::move(batch));
   }
+
   cv_.notify_one();
 
-  return hdr.lsn;
+  return reserved_lsn;
 }
 
 LSN WAL_mgr::append_record(LogRecordHeader& hdr, const void* payload)
 {
-  LSN lsn = append_record_async(hdr, payload);
-  std::unique_lock lock(flush_mutex_);
-  flush_cv_.wait(lock, [&] { return is_lsn_flushed(lsn); });
+  auto batch = std::make_unique<LogRecordBatch>();
+  const std::size_t payload_sz =
+      hdr.lr_length - sizeof(LogRecordHeader);  // may be 0
+  batch->data.resize(sizeof(LogRecordHeader) + payload_sz);
+
+  // copy header; further mutation happens inside append_record_async
+  std::memcpy(batch->data.data(), &hdr, sizeof(LogRecordHeader));
+
+  if (payload_sz && payload)
+    std::memcpy(batch->data.data() + sizeof(LogRecordHeader), payload,
+                payload_sz);
+
+  LSN lsn = append_record_async(std::move(batch));
+
+  std::unique_lock lk(flush_mutex_);
+  flush_cv_.wait(lk, [&] { return is_lsn_flushed(lsn); });
+
+  hdr.lsn = lsn;
   return lsn;
 }
 
@@ -298,4 +306,21 @@ bool WAL_mgr::get_record(LSN lsn, LogRecordHeader& header_out,
   }
 
   return true;
+}
+
+WAL_mgr::BatchBuilder WAL_mgr::make_batch(LR_TYPE type, uint64_t txn_id,
+                                          LSN prev_lsn, std::size_t payload_sz,
+                                          std::size_t extra_sz)
+{
+  auto batch = std::make_unique<LogRecordBatch>();
+  batch->data.resize(sizeof(LogRecordHeader) + payload_sz + extra_sz);
+
+  auto* hdr = reinterpret_cast<LogRecordHeader*>(batch->data.data());
+  hdr->lsn = 0;  // filled when appended
+  hdr->type = type;
+  hdr->txn_id = txn_id;
+  hdr->prev_lsn = prev_lsn;
+  hdr->lr_length = static_cast<uint32_t>(batch->data.size());
+
+  return BatchBuilder(std::move(batch), hdr);
 }

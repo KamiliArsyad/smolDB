@@ -2,6 +2,7 @@
 #define SMOLDB_H
 
 #include <boost/asio/any_io_executor.hpp>
+#include <boost/asio/awaitable.hpp>
 #include <filesystem>
 #include <memory>
 
@@ -103,6 +104,16 @@ class SmolDB
    * @brief Aborts an existing transaction.
    */
   void abort_transaction(TransactionID txn_id);
+
+  /**
+   * @brief Asynchronously commits an existing transaction.
+   */
+  boost::asio::awaitable<void> async_commit_transaction(TransactionID txn_id);
+
+  /**
+   * @brief Asynchronously aborts an existing transaction.
+   */
+  boost::asio::awaitable<void> async_abort_transaction(TransactionID txn_id);
 
  private:
   friend class HeapFileTest;  // Allow test to access internals

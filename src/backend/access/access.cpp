@@ -374,6 +374,155 @@ bool Table<HeapFileT>::delete_row(TransactionID txn_id, RID rid)
 }
 
 template <typename HeapFileT>
+boost::asio::awaitable<RID> Table<HeapFileT>::async_insert_row(
+    TransactionID txn_id, const Row& row)
+{
+  if (!txn_manager_)
+  {
+    throw std::runtime_error("TransactionManager not available in Table");
+  }
+  Transaction* txn = txn_manager_->get_transaction(txn_id);
+  if (!txn)
+  {
+    throw std::runtime_error("Transaction not active");
+  }
+
+  if (!heap_file_)
+  {
+    throw std::runtime_error("Table not properly initialized");
+  }
+
+  if (row.get_schema().size() != schema_.size())
+  {
+    throw std::invalid_argument("Row schema doesn't match table schema");
+  }
+
+  auto row_bytes = row.to_bytes();
+
+  // The async_append operation will perform the disk/buffer modifications.
+  RID new_rid = co_await heap_file_->async_append(txn, row_bytes);
+
+  // After the physical insert, we acquire the lock and update the index.
+  lock_manager_->acquire_exclusive(txn, new_rid);
+
+  if (index_)
+  {
+    index_->insert_entry(row, new_rid);
+    txn->add_index_undo(
+        {IndexUndoType::REVERSE_INSERT, index_.get(), row, new_rid});
+  }
+
+  txn->cache_row(new_rid, row);
+  co_return new_rid;
+}
+
+template <typename HeapFileT>
+boost::asio::awaitable<bool> Table<HeapFileT>::async_update_row(
+    TransactionID txn_id, RID rid, const Row& new_row)
+{
+  if (!txn_manager_)
+  {
+    throw std::runtime_error("TransactionManager not available in Table");
+  }
+  Transaction* txn = txn_manager_->get_transaction(txn_id);
+  if (!txn)
+  {
+    throw std::runtime_error("Transaction not active");
+  }
+
+  if (!heap_file_)
+  {
+    throw std::runtime_error("Table not properly initialized");
+  }
+
+  if (new_row.get_schema().size() != schema_.size())
+  {
+    throw std::invalid_argument("Row schema doesn't match table schema");
+  }
+
+  // Acquire exclusive lock before any modification
+  if (!lock_manager_->acquire_exclusive(txn, rid))
+  {
+    // In a real system, this would likely throw or return a status.
+    // For now, we mirror the previous simple return.
+    co_return false;
+  }
+
+  // Handle index update BEFORE heap file update
+  if (index_)
+  {
+    Row old_row(schema_);
+    std::vector<std::byte> old_bytes;
+
+    if (!txn->get_cached_row(rid, old_row))
+    {
+      if (!heap_file_->get(txn, rid, old_bytes))
+      {
+        co_return false;  // Row doesn't exist or is a tombstone.
+      }
+      old_row = Row::from_bytes(old_bytes, schema_);
+    }
+
+    if (index_->update_entry(old_row, new_row, rid))
+    {
+      txn->add_index_undo(
+          {IndexUndoType::REVERSE_DELETE, index_.get(), old_row, rid});
+      txn->add_index_undo(
+          {IndexUndoType::REVERSE_INSERT, index_.get(), new_row, rid});
+    }
+  }
+
+  txn->cache_row(rid, new_row);
+  auto row_bytes = new_row.to_bytes();
+  co_return co_await heap_file_->async_update(txn, rid, row_bytes);
+}
+
+template <typename HeapFileT>
+boost::asio::awaitable<bool> Table<HeapFileT>::async_delete_row(
+    TransactionID txn_id, RID rid)
+{
+  if (!txn_manager_)
+  {
+    throw std::runtime_error("TransactionManager not available in Table");
+  }
+  Transaction* txn = txn_manager_->get_transaction(txn_id);
+  if (!txn)
+  {
+    throw std::runtime_error("Transaction not active");
+  }
+
+  if (!heap_file_)
+  {
+    throw std::runtime_error("Table not properly initialized");
+  }
+
+  txn->remove_cache(rid);
+
+  // Acquire exclusive lock before any modification
+  if (!lock_manager_->acquire_exclusive(txn, rid))
+  {
+    co_return false;
+  }
+
+  if (index_)
+  {
+    std::vector<std::byte> old_bytes;
+    if (!heap_file_->get(txn, rid, old_bytes))
+    {
+      co_return false;  // Row not found, nothing to delete.
+    }
+
+    Row old_row = Row::from_bytes(old_bytes, schema_);
+    index_->delete_entry(old_row);
+
+    txn->add_index_undo(
+        {IndexUndoType::REVERSE_DELETE, index_.get(), old_row, rid});
+  }
+
+  co_return co_await heap_file_->async_delete(txn, rid);
+}
+
+template <typename HeapFileT>
 bool Table<HeapFileT>::get_rid_from_index(TransactionID txn_id,
                                           const Value& key, RID& out_rid) const
 {

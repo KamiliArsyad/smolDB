@@ -128,3 +128,13 @@ void SmolDB::abort_transaction(TransactionID txn_id)
 {
   txn_manager_->abort(txn_id);
 }
+
+boost::asio::awaitable<void> SmolDB::async_commit_transaction(TransactionID txn_id)
+{
+  co_await txn_manager_->async_commit(txn_id);
+}
+
+boost::asio::awaitable<void> SmolDB::async_abort_transaction(TransactionID txn_id)
+{
+  co_await txn_manager_->async_abort(txn_id);
+}

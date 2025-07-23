@@ -47,12 +47,12 @@ struct LogRecordHeader
 
 struct UpdatePagePayload
 {
-  uint32_t page_id;
+  PageID page_id;
   uint16_t offset;
   uint16_t length;
   std::byte data[];
 
-  static UpdatePagePayload* create(uint32_t pid, uint16_t off, uint16_t len)
+  static UpdatePagePayload* create(PageID pid, uint16_t off, uint16_t len)
   {
     size_t total =
         sizeof(UpdatePagePayload) + size_t(len) * 2 * sizeof(std::byte);
@@ -66,13 +66,13 @@ struct UpdatePagePayload
 
 struct CLR_Payload
 {
-  uint32_t page_id;
+  PageID page_id;
   uint16_t offset;
   uint16_t length;
   LSN undoNextLSN;
   std::byte data[];
 
-  static CLR_Payload* create(uint32_t pid, uint16_t off, uint16_t len,
+  static CLR_Payload* create(PageID pid, uint16_t off, uint16_t len,
                              LSN undo_next)
   {
     size_t total = sizeof(CLR_Payload) + size_t(len) * sizeof(std::byte);
@@ -105,7 +105,7 @@ class WAL_mgr
   LSN append_record(LogRecordHeader& hdr, const void* payload = nullptr);
 
   // ASYNC API: Appends a record to the WAL buffer. Does NOT block.
-  LSN append_record_async(LogRecordHeader& hdr, const void* payload = nullptr);
+  LSN append_record_async(std::unique_ptr<LogRecordBatch>&& batch);
 
   // ASYNC API: Asynchronously waits for an LSN to be durable.
   template <typename CompletionToken>
@@ -160,9 +160,43 @@ class WAL_mgr
 
   void flush_to_lsn(LSN target)
   {
-    std::scoped_lock lock(general_mtx_);
-    if (target > flushed_lsn_) wal_stream_.flush();
+    if (is_lsn_flushed(target)) return;
+    std::unique_lock lk(flush_mutex_);
+    flush_cv_.wait(lk, [&] { return is_lsn_flushed(target); });
   }
+
+  class BatchBuilder
+  {
+    friend class WAL_mgr;
+    std::unique_ptr<LogRecordBatch> batch_;
+    LogRecordHeader* hdr_;  // points inside batch_->data
+
+    BatchBuilder(std::unique_ptr<LogRecordBatch>&& b, LogRecordHeader* h)
+        : batch_(std::move(b)), hdr_(h)
+    {
+    }
+
+   public:
+    template <typename T>
+    T* payload()
+    {
+      return reinterpret_cast<T*>(batch_->data.data() +
+                                  sizeof(LogRecordHeader));
+    }
+
+    std::byte* extra(std::size_t offset)
+    {
+      return reinterpret_cast<std::byte*>(batch_->data.data() +
+                                          sizeof(LogRecordHeader) + offset);
+    }
+
+    std::unique_ptr<LogRecordBatch>&& done() { return std::move(batch_); }
+  };
+
+  // generic factory to make batch
+  static BatchBuilder make_batch(LR_TYPE type, uint64_t txn_id, LSN prev_lsn,
+                                 std::size_t payload_bytes,
+                                 std::size_t extra_bytes = 0);
 
  private:
   void writer_thread_main();
