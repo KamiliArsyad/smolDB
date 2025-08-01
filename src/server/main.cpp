@@ -1,14 +1,11 @@
-#include <grpcpp/ext/proto_server_reflection_plugin.h>
-#include <grpcpp/health_check_service_interface.h>
-
 #include <boost/asio/executor_work_guard.hpp>
 #include <boost/asio/io_context.hpp>
 #include <iostream>
 #include <thread>
 #include <vector>
 
-#include "server.h"
 #include "smoldb.h"
+#include "server.h"
 
 namespace asio = boost::asio;
 
@@ -29,30 +26,14 @@ class EchoProcedure : public smoldb::TransactionProcedure
 
 void RunServer(smoldb::DBConfig& db_config, asio::any_io_executor executor)
 {
-  std::string server_address(db_config.listen_address);
   smoldb::SmolDB db_engine(db_config, executor);
   db_engine.startup();
   db_engine.get_procedure_manager()->register_procedure(
       std::make_unique<EchoProcedure>());
 
-#if SMOLDB_USE_CALLBACK_API
-  GrpcCallbackService service(db_engine.get_procedure_manager());
-#else
-#error "No gRPC service implementation selected."
-#endif
+  GrpcServer server(db_engine.get_procedure_manager(), executor);
+  server.run(db_config.get_full_listen_address());
 
-  grpc::EnableDefaultHealthCheckService(true);
-  grpc::reflection::InitProtoReflectionServerBuilderPlugin();
-
-  grpc::ServerBuilder builder;
-  builder.AddListeningPort(server_address, grpc::InsecureServerCredentials());
-
-  builder.RegisterService(&service);
-
-  std::unique_ptr server(builder.BuildAndStart());
-  std::cout << "Server listening on " << server_address << std::endl;
-
-  server->Wait();
   db_engine.shutdown();
 }
 
@@ -72,7 +53,7 @@ int main(int argc, char** argv)
   // work.
   auto work_guard = asio::make_work_guard(io_context.get_executor());
 
-  // 4. Populate the thread pool.
+  // Populate the thread pool.
   for (int i = 0; i < num_threads; ++i)
   {
     thread_pool.emplace_back([&io_context]() { io_context.run(); });

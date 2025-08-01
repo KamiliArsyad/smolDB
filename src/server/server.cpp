@@ -2,13 +2,15 @@
 
 #include <google/protobuf/util/time_util.h>
 
-#include <boost/asio/co_spawn.hpp>
-#include <boost/asio/detached.hpp>
+#include <boost/lexical_cast.hpp>
 
 #include "lock_excepts.h"
+#include "proc/proc_mgr.h"
 
-#if SMOLDB_USE_CALLBACK_API
-
+namespace smoldb
+{
+class TransactionAbortedException;
+}
 namespace
 {
 // --- Marshalling Utilities ---
@@ -60,79 +62,113 @@ void from_backend_value(const smoldb::Value& backend_val,
   }
 }
 
+smoldb::ProcedureParams to_backend_params(
+    const google::protobuf::Map<std::string, smoldb::rpc::Value>& proto_params)
+{
+  smoldb::ProcedureParams backend_params;
+  for (const auto& [key, val] : proto_params)
+  {
+    backend_params[key] = to_backend_value(val);
+  }
+  return backend_params;
+}
+
+void from_backend_result(
+    const smoldb::ProcedureResult& backend_result,
+    google::protobuf::Map<std::string, smoldb::rpc::Value>* proto_results)
+{
+  for (const auto& [key, val] : backend_result)
+  {
+    from_backend_value(val, &(*proto_results)[key]);
+  }
+}
+
 }  // anonymous namespace
 
-GrpcCallbackService::GrpcCallbackService(smoldb::ProcedureManager* proc_mgr)
-    : proc_mgr_(proc_mgr)
+GrpcServer::GrpcServer(smoldb::ProcedureManager* proc_mgr,
+                       boost::asio::any_io_executor executor)
+    : proc_mgr_(proc_mgr), executor_(std::move(executor))
 {
   assert(proc_mgr_ != nullptr);
 }
 
-grpc::ServerUnaryReactor* GrpcCallbackService::ExecuteProcedure(
-    grpc::CallbackServerContext* context,
-    const smoldb::rpc::ExecuteProcedureRequest* request,
-    smoldb::rpc::ExecuteProcedureResponse* response)
+boost::asio::awaitable<void> GrpcServer::handle_execute_procedure(
+    agrpc::ServerRPC<
+        &smoldb::rpc::SmolDBService::AsyncService::RequestExecuteProcedure>&
+        rpc,
+    smoldb::rpc::ExecuteProcedureRequest& request)
 {
-  auto* reactor = context->DefaultReactor();
+  smoldb::rpc::ExecuteProcedureResponse response;
+  grpc::Status status = grpc::Status::OK;
 
-  // Copy request data to ensure its lifetime past the initial function return.
-  const std::string proc_name = request->procedure_name();
-  smoldb::ProcedureParams params;
   try
   {
-    for (const auto& [key, val] : request->params())
+    smoldb::ProcedureParams params = to_backend_params(request.params());
+
+    auto [proc_status, result] = co_await proc_mgr_->async_execute_procedure(
+        request.procedure_name(), params);
+
+    if (proc_status == smoldb::ProcedureStatus::ABORT)
     {
-      params[key] = to_backend_value(val);
+      response.set_status(smoldb::rpc::ExecuteProcedureResponse::ABORT);
     }
+    else
+    {
+      response.set_status(smoldb::rpc::ExecuteProcedureResponse::SUCCESS);
+    }
+    from_backend_result(result, response.mutable_results());
+  }
+  catch (const smoldb::TransactionAbortedException& e)
+  {
+    // Handle retryable backend errors (deadlocks, timeouts)
+    status = grpc::Status(grpc::StatusCode::ABORTED, e.what());
   }
   catch (const std::exception& e)
   {
-    reactor->Finish(grpc::Status(grpc::StatusCode::INVALID_ARGUMENT, e.what()));
-    return reactor;
+    // Handle unexpected errors
+    status = grpc::Status(grpc::StatusCode::INTERNAL, e.what());
   }
 
-  // Spawn the actual work as a coroutine on the procedure manager's executor.
-  boost::asio::co_spawn(
-      proc_mgr_->get_executor(),
-      [this, reactor, proc_name, params,
-       response]() -> boost::asio::awaitable<void>
-      {
-        try
-        {
-          auto [status, result] =
-              co_await proc_mgr_->async_execute_procedure(proc_name, params);
-
-          // Marshall response from C++ to Protobuf types
-          if (status == smoldb::ProcedureStatus::ABORT)
-          {
-            response->set_status(smoldb::rpc::ExecuteProcedureResponse::ABORT);
-          }
-          else
-          {
-            response->set_status(
-                smoldb::rpc::ExecuteProcedureResponse::SUCCESS);
-          }
-
-          for (const auto& [key, val] : result)
-          {
-            from_backend_value(val, &(*response->mutable_results())[key]);
-          }
-          reactor->Finish(grpc::Status::OK);
-        }
-        catch (const smoldb::TransactionAbortedException& e)
-        {
-          response->set_status(smoldb::rpc::ExecuteProcedureResponse::ABORT);
-          (*response->mutable_results())["reason"].set_string_value(e.what());
-          reactor->Finish(grpc::Status::OK);
-        }
-        catch (const std::exception& e)
-        {
-          reactor->Finish(grpc::Status(grpc::StatusCode::INTERNAL, e.what()));
-        }
-        co_return;
-      },
-      boost::asio::detached);
-
-  return reactor;
+  co_await rpc.finish(response, status, boost::asio::use_awaitable);
 }
-#endif  // SMOLDB_USE_CALLBACK_API
+
+void GrpcServer::run(const std::string& server_address)
+{
+  grpc::ServerBuilder builder;
+  builder.AddListeningPort(server_address, grpc::InsecureServerCredentials());
+
+  smoldb::rpc::SmolDBService::AsyncService service;
+  builder.RegisterService(&service);
+
+  // The GrpcContext must be created before the server is built.
+  grpc_context_ =
+      std::make_unique<agrpc::GrpcContext>(builder.AddCompletionQueue());
+
+  server_ = builder.BuildAndStart();  // Assign to member
+  if (!server_)
+  {
+    throw std::runtime_error("Failed to start gRPC server");
+  }
+
+  agrpc::register_awaitable_rpc_handler<agrpc::ServerRPC<
+      &smoldb::rpc::SmolDBService::AsyncService::RequestExecuteProcedure>>(
+      *grpc_context_, service,
+      [this](auto& rpc, auto& request) -> boost::asio::awaitable<void>
+      { return this->handle_execute_procedure(rpc, request); },
+      agrpc::detail::RethrowFirstArg{});
+
+  std::cout << "Server listening on " << server_address << std::endl;
+  grpc_context_->run();  // This will block until stop() is called.
+}
+
+void GrpcServer::stop()
+{
+  if (server_)
+  {
+    server_->Shutdown();
+  }
+  if (grpc_context_)
+  {
+    grpc_context_->stop();
+  }
+}
