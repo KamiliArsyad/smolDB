@@ -27,8 +27,8 @@ SmolDB::SmolDB(const smoldb::DBConfig& config,
   buffer_pool_ = std::make_unique<BufferPool>(config.buffer_pool_size_frames,
                                               disk_mgr_.get(), wal_mgr_.get(),
                                               config.buffer_pool_shard_count);
-  lock_manager_ =
-      std::make_unique<LockManager>(config.lock_manager_shard_count);
+  lock_manager_ = std::make_unique<LockManager>(config.lock_manager_shard_count,
+                                                config.trx_lock_timeout);
   txn_manager_ = std::make_unique<TransactionManager>(
       lock_manager_.get(), wal_mgr_.get(), buffer_pool_.get());
   catalog_ = std::make_unique<Catalog>();

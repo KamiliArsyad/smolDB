@@ -6,9 +6,9 @@
 
 using namespace smoldb;
 
-LockManager::LockManager(size_t shard_count)
+LockManager::LockManager(size_t shard_count, int lock_timeout)
     : shard_count_(shard_count),
-      lock_timeout_(100)  // 100ms timeout for deadlock prevention
+      lock_timeout_(lock_timeout)  // 100ms timeout for deadlock prevention
 {
   shards_.resize(shard_count_);
 }
