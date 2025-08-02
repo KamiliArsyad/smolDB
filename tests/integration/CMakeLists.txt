@@ -19,6 +19,7 @@ set(INTEGRATION_SRCS
         app_generic/transfer_points_test.cpp
         app_generic/throughput_benchmark.cpp
         grpc_test.cpp
+        async_dml_test.cpp
 )
 
 # Use a distinct name for the executable target.
