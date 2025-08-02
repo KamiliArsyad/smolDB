@@ -132,7 +132,8 @@ void TransactionManager::abort(TransactionID txn_id)
   {
     LogRecordHeader hdr;
     std::vector<char> payload_vec;
-    assert(wal_manager_->get_record(current_lsn, hdr, payload_vec));
+    bool ok = wal_manager_->get_record(current_lsn, hdr, payload_vec);
+    assert(ok);
     LSN next_lsn_in_chain = 0;
 
     if (hdr.type == CLR)
@@ -251,7 +252,8 @@ asio::awaitable<void> TransactionManager::async_abort(TransactionID txn_id)
   {
     LogRecordHeader hdr;
     std::vector<char> payload_vec;
-    assert(wal_manager_->get_record(current_lsn, hdr, payload_vec));
+    bool ok = wal_manager_->get_record(current_lsn, hdr, payload_vec);
+    assert(ok);
     LSN next_lsn_in_chain = 0;
 
     if (hdr.type == CLR)
