@@ -193,6 +193,38 @@ void Table<HeapFileT>::Iterator::find_next()
 }
 
 template <typename HeapFileT>
+void Table<HeapFileT>::validate_row_schema(const Row& row) const
+{
+  const Schema& row_schema = row.get_schema();
+  if (row_schema.size() != schema_.size())
+  {
+    throw std::invalid_argument("Row schema column count mismatch. Expected " +
+                                std::to_string(schema_.size()) + ", got " +
+                                std::to_string(row_schema.size()));
+  }
+
+  for (size_t i = 0; i < schema_.size(); ++i)
+  {
+    if (row_schema[i].type != schema_[i].type)
+    {
+      throw std::invalid_argument("Row schema type mismatch for column '" +
+                                  schema_[i].name + "' at index " +
+                                  std::to_string(i));
+    }
+    if (schema_[i].type == Col_type::STRING)
+    {
+      const auto& val = boost::get<std::string>(row.get_value(i));
+      if (val.length() > schema_[i].size)
+      {
+        throw std::invalid_argument("String value for column '" +
+                                    schema_[i].name + "' exceeds max size of " +
+                                    std::to_string(schema_[i].size));
+      }
+    }
+  }
+}
+
+template <typename HeapFileT>
 Table<HeapFileT>::~Table() = default;
 
 template <typename HeapFileT>
@@ -231,11 +263,7 @@ RID Table<HeapFileT>::insert_row(TransactionID txn_id, const Row& row)
     throw std::runtime_error("Table not properly initialized");
   }
 
-  // Validate row schema matches table schema
-  if (row.get_schema().size() != schema_.size())
-  {
-    throw std::invalid_argument("Row schema doesn't match table schema");
-  }
+  validate_row_schema(row);
 
   // Convert row to bytes and store
   auto row_bytes = row.to_bytes();
@@ -280,10 +308,7 @@ bool Table<HeapFileT>::update_row(TransactionID txn_id, RID rid,
     throw std::runtime_error("Table not properly initialized");
   }
 
-  if (new_row.get_schema().size() != schema_.size())
-  {
-    throw std::invalid_argument("Row schema doesn't match table schema");
-  }
+  validate_row_schema(new_row);
 
   auto row_bytes = new_row.to_bytes();
 
@@ -392,10 +417,7 @@ boost::asio::awaitable<RID> Table<HeapFileT>::async_insert_row(
     throw std::runtime_error("Table not properly initialized");
   }
 
-  if (row.get_schema().size() != schema_.size())
-  {
-    throw std::invalid_argument("Row schema doesn't match table schema");
-  }
+  validate_row_schema(row);
 
   auto row_bytes = row.to_bytes();
 
@@ -435,10 +457,7 @@ boost::asio::awaitable<bool> Table<HeapFileT>::async_update_row(
     throw std::runtime_error("Table not properly initialized");
   }
 
-  if (new_row.get_schema().size() != schema_.size())
-  {
-    throw std::invalid_argument("Row schema doesn't match table schema");
-  }
+  validate_row_schema(new_row);
 
   // Acquire exclusive lock before any modification
   if (!lock_manager_->acquire_exclusive(txn, rid))

@@ -303,6 +303,8 @@ class Table
     // Note: heap_file_ is not serialized, it's reconstructed when needed
   }
 
+  void validate_row_schema(const Row& row) const;
+
  public:
   Table() = default;
   ~Table();
