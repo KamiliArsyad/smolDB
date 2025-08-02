@@ -257,19 +257,18 @@ TEST_F(AsyncDMLTest, ConcurrentAsyncInsertsForceNewPage)
   {
     int32_t v = static_cast<int32_t>(slots_per_page + i);
 
-    futs_.emplace_back(
-        asio::co_spawn(
-            io_context_,
-            [db_ref, table, v]() -> asio::awaitable<void>
-            {
-              TransactionID txn = db_ref->begin_transaction();
-              Row r(table->get_schema());
-              r.set_value("id", v);
-              r.set_value("val", v);
-              co_await table->async_insert_row(txn, r);
-              co_await db_ref->async_commit_transaction(txn);
-            },
-            asio::use_future));
+    futs_.emplace_back(asio::co_spawn(
+        io_context_,
+        [db_ref, table, v]() -> asio::awaitable<void>
+        {
+          TransactionID txn = db_ref->begin_transaction();
+          Row r(table->get_schema());
+          r.set_value("id", v);
+          r.set_value("val", v);
+          co_await table->async_insert_row(txn, r);
+          co_await db_ref->async_commit_transaction(txn);
+        },
+        asio::use_future));
   }
 
   io_context_.run();
@@ -277,4 +276,94 @@ TEST_F(AsyncDMLTest, ConcurrentAsyncInsertsForceNewPage)
 
   auto final_count = (slots_per_page - 1) + num_concurrent_inserts;
   EXPECT_EQ(final_count, table->scan_all().size());
+}
+
+TEST_F(AsyncDMLTest, AsyncDeleteAndCommitIsDurable)
+{
+  // Setup: Insert a row that we can delete.
+  TransactionID setup_txn = db->begin_transaction();
+  Table<>* table = db->get_table("test_table");
+  Row initial_row(table->get_schema());
+  initial_row.set_value("id", 42);
+  initial_row.set_value("val", 420);
+  RID rid = table->insert_row(setup_txn, initial_row);
+  db->commit_transaction(setup_txn);
+
+  // Action: Asynchronously delete the row and commit.
+  auto delete_awaitable = [&]() -> asio::awaitable<bool>
+  {
+    TransactionID txn = db->begin_transaction();
+    bool success = co_await table->async_delete_row(txn, rid);
+    co_await db->async_commit_transaction(txn);
+    co_return success;
+  };
+  ASSERT_TRUE(run_awaitable(delete_awaitable()));
+
+  // Verify: The row and its index entry are gone.
+  auto verify_awaitable = [&]() -> asio::awaitable<std::pair<bool, bool>>
+  {
+    TransactionID txn = db->begin_transaction();
+    Row out_row;
+    bool row_found = table->get_row(txn, rid, out_row);
+    RID found_rid;
+    bool index_found = table->get_rid_from_index(txn, 42, found_rid);
+    co_await db->async_commit_transaction(txn);
+    co_return std::pair{!row_found, !index_found};
+  };
+  auto [row_is_gone, index_is_gone] = run_awaitable(verify_awaitable());
+  EXPECT_TRUE(row_is_gone);
+  EXPECT_TRUE(index_is_gone);
+}
+
+TEST_F(AsyncDMLTest, AsyncDeleteAndAbortIsReverted)
+{
+  // Setup: Insert a row.
+  TransactionID setup_txn = db->begin_transaction();
+  Table<>* table = db->get_table("test_table");
+  Row initial_row(table->get_schema());
+  initial_row.set_value("id", 42);
+  initial_row.set_value("val", 420);
+  RID rid = table->insert_row(setup_txn, initial_row);
+  db->commit_transaction(setup_txn);
+
+  // Action: Asynchronously delete the row and then abort.
+  auto delete_abort_awaitable = [&]() -> asio::awaitable<void>
+  {
+    TransactionID txn = db->begin_transaction();
+    co_await table->async_delete_row(txn, rid);
+    co_await db->async_abort_transaction(txn);
+  };
+  run_awaitable(delete_abort_awaitable());
+
+  // Verify: The row and its index entry are still present.
+  auto verify_awaitable = [&]() -> asio::awaitable<std::pair<bool, bool>>
+  {
+    TransactionID txn = db->begin_transaction();
+    Row out_row;
+    bool row_found = table->get_row(txn, rid, out_row);
+    RID found_rid;
+    bool index_found = table->get_rid_from_index(txn, 42, found_rid);
+    co_await db->async_commit_transaction(txn);
+    co_return std::pair{row_found, index_found};
+  };
+  auto [row_is_present, index_is_present] = run_awaitable(verify_awaitable());
+  EXPECT_TRUE(row_is_present);
+  EXPECT_TRUE(index_is_present);
+}
+
+TEST_F(AsyncDMLTest, AsyncDeleteInvalidRidReturnsFalse)
+{
+  Table<>* table = db->get_table("test_table");
+  RID invalid_rid = {999, 999};
+
+  auto delete_awaitable = [&]() -> asio::awaitable<bool>
+  {
+    TransactionID txn = db->begin_transaction();
+    bool success = co_await table->async_delete_row(txn, invalid_rid);
+    co_await db->async_abort_transaction(
+        txn);  // Abort is fine, nothing happened
+    co_return success;
+  };
+
+  EXPECT_FALSE(run_awaitable(delete_awaitable()));
 }
