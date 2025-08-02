@@ -453,11 +453,11 @@ boost::asio::awaitable<RID> HeapFile::async_append(
   RID new_rid = {current_page_id, *free_slot_idx};
 
   // Log the update
-  auto page_for_log = guard.write();
-  std::byte *slot_ptr_for_log = get_slot_ptr(*page_for_log, *free_slot_idx);
+  auto page_writer = guard.write();
+  std::byte *slot_ptr_for_log = get_slot_ptr(*page_writer, *free_slot_idx);
   uint16_t region_offset =
       static_cast<uint16_t>(reinterpret_cast<uintptr_t>(slot_ptr_for_log) -
-                            reinterpret_cast<uintptr_t>(page_for_log->data()));
+                            reinterpret_cast<uintptr_t>(page_writer->data()));
   uint16_t region_length = static_cast<uint16_t>(tuple_data.size());
 
   // Build an UPDATE batch: payload = UpdatePagePayload, extra = bef+aft
@@ -470,7 +470,7 @@ boost::asio::awaitable<RID> HeapFile::async_append(
 
   // before image: whatever currently lives in the slot
   std::memcpy(const_cast<std::byte *>(upd->bef()),
-              page_for_log->data() + region_offset, region_length);
+              page_writer->data() + region_offset, region_length);
 
   // after image: incoming tuple data
   std::memcpy(const_cast<std::byte *>(upd->aft()), tuple_data.data(),
@@ -479,13 +479,12 @@ boost::asio::awaitable<RID> HeapFile::async_append(
   LSN lsn = wal_mgr_->append_record_async(batch.done());
   txn->set_prev_lsn(lsn);
 
-  auto page = guard.write();
-  set_slot_bit(get_bitmap_ptr(*page), *free_slot_idx);
-  std::byte *slot_ptr = get_slot_ptr(*page, *free_slot_idx);
+  set_slot_bit(get_bitmap_ptr(*page_writer), *free_slot_idx);
+  std::byte *slot_ptr = get_slot_ptr(*page_writer, *free_slot_idx);
   set_tuple_metadata(slot_ptr, tuple_data.size(), false);
   std::memcpy(get_tuple_data_ptr(slot_ptr), tuple_data.data(),
               tuple_data.size());
-  page->hdr.page_lsn = lsn;
+  page_writer->hdr.page_lsn = lsn;
   guard.mark_dirty();
 
   co_return new_rid;
