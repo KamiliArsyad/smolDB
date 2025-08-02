@@ -88,7 +88,7 @@ class ThroughputBenchmark : public ::testing::Test
             Row r(schema);
             r.set_value("user_id", i);
             r.set_value("points", INITIAL_POINTS);
-            table->insert_row(txn, r);
+            co_await table->async_insert_row(txn, r);
           }
           co_await db->async_commit_transaction(txn);
         },

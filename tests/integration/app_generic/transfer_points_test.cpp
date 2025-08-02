@@ -108,8 +108,8 @@ class TransferPointsTest : public ::testing::Test
           r1.set_value("points", 100);
           r2.set_value("user_id", 202);
           r2.set_value("points", 50);
-          table->insert_row(txn, r1);
-          table->insert_row(txn, r2);
+          co_await table->async_insert_row(txn, r1);
+          co_await table->async_insert_row(txn, r2);
           co_await db->async_commit_transaction(txn);
         },
         asio::detached);

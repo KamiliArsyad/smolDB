@@ -52,8 +52,16 @@ struct UpdatePagePayload
   uint16_t length;
   std::byte data[];
 
+  /**
+   * @brief Allocate header + 2*length bytes in one go
+   * @param pid {in} the page id of the updated record.
+   * @param off {in} the offset within page of the updated record
+   * @param len {in} the length of the block updated
+   * @return A struct
+   */
   static UpdatePagePayload* create(PageID pid, uint16_t off, uint16_t len)
   {
+    // sizeof(header) + payload for bef+aft
     size_t total =
         sizeof(UpdatePagePayload) + size_t(len) * 2 * sizeof(std::byte);
     void* mem = operator new(total);
@@ -64,6 +72,10 @@ struct UpdatePagePayload
   const std::byte* aft() const { return data + length; }
 };
 
+// A CLR contains the standard update payload (the "undo" action)
+// plus the LSN of the next record to undo in the transaction chain.
+// This does NOT inherit from UpdatePagePayload to ensure the flexible
+// array member is the last member in the struct.
 struct CLR_Payload
 {
   PageID page_id;
@@ -155,6 +167,13 @@ class WAL_mgr
   std::map<LSN, std::pair<LogRecordHeader, std::vector<char>>>
   read_all_records();
 
+  /**
+   * @brief Random-access fast lookup to find a WAL record.
+   * @param lsn {in} The LSN to look for.
+   * @param header_out {out} Header of the record.
+   * @param payload_out {out} The record payload.
+   * @return False iff the queried LSN is not found.
+   */
   bool get_record(LSN lsn, LogRecordHeader& header_out,
                   std::vector<char>& payload_out);
 
