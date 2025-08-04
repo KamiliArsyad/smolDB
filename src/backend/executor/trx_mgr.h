@@ -64,16 +64,27 @@ class TransactionManager
    */
   Transaction* get_transaction(TransactionID txn_id);
 
+  struct Shard
+  {
+    std::mutex shard_mutex_;
+    std::unordered_map<TransactionID, std::unique_ptr<Transaction>> active_txns;
+  };
+
  private:
   void apply_undo(LSN lsn, const UpdatePagePayload* payload);
+  static constexpr size_t NUM_SHARDS = 256;
 
   LockManager* lock_manager_;
   WAL_mgr* wal_manager_;
   BufferPool* buffer_pool_;
 
   std::atomic<TransactionID> next_txn_id_;
-  std::mutex active_txns_mutex_;
-  std::unordered_map<TransactionID, std::unique_ptr<Transaction>> active_txns_;
+  std::array<Shard, NUM_SHARDS> active_txn_shards;
+
+  Shard& get_txn_map_shard(TransactionID txn_id)
+  {
+    return active_txn_shards[txn_id % NUM_SHARDS];
+  }
 };
 
 }  // namespace smoldb
