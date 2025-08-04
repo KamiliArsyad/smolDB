@@ -21,6 +21,9 @@ struct DBConfig
   size_t lock_manager_shard_count = std::thread::hardware_concurrency();
   int trx_lock_timeout = 100;
 
+  size_t wal_mgr_batch_byte_threshold = 1 << 15;
+  std::chrono::microseconds wal_mgr_batch_deadline_threshold{200};
+
   std::string listen_address = "0.0.0.0";
   std::string listen_port = "50051";
 

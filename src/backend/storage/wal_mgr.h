@@ -106,7 +106,10 @@ class WAL_mgr
 {
  public:
   explicit WAL_mgr(const std::filesystem::path& path,
-                   boost::asio::any_io_executor executor);
+                   boost::asio::any_io_executor executor,
+                   size_t batch_byte_thresh = 1 << 15,
+                   std::chrono::microseconds batch_deadline_thresh =
+                       std::chrono::microseconds(200));
   ~WAL_mgr();
 
   // No copy/move
@@ -159,10 +162,6 @@ class WAL_mgr
   }
 
   void recover(BufferPool& bfr_manager, const std::filesystem::path& path);
-
-  void read_all_records_for_txn(
-      uint64_t txn_id,
-      std::vector<std::pair<LogRecordHeader, std::vector<char>>>& out);
 
   std::map<LSN, std::pair<LogRecordHeader, std::vector<char>>>
   read_all_records();
@@ -220,8 +219,13 @@ class WAL_mgr
  private:
   void writer_thread_main();
 
+  std::size_t batch_bytes_;
+  std::chrono::microseconds batch_time_;
+
   std::filesystem::path path_;
   std::ofstream wal_stream_;
+  int wal_fd_ = -1;
+  off_t file_offset_ = 0;
   std::atomic<LSN> next_lsn_ = 1;
   std::atomic<LSN> flushed_lsn_ = 0;
 
@@ -231,6 +235,11 @@ class WAL_mgr
   std::mutex mtx_;
   std::condition_variable cv_;
   std::list<std::unique_ptr<LogRecordBatch>> write_queue_;
+
+  // batching stuff (protected by mtx_)
+  std::size_t pending_bytes_ = 0;
+  std::chrono::steady_clock::time_point flush_deadline_;
+  bool queue_was_empty_ = true;
 
   std::map<LSN, std::streamoff> lsn_to_offset_idx_;
 

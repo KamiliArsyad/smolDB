@@ -69,6 +69,8 @@ class ThroughputBenchmark : public ::testing::Test
     config.buffer_pool_shard_count = 128;
     config.lock_manager_shard_count = 128;
     config.buffer_pool_size_frames = 512;  // A larger pool for a bench
+    config.wal_mgr_batch_deadline_threshold = std::chrono::microseconds(500);
+    config.wal_mgr_batch_byte_threshold = 1 << 16;
     db = std::make_unique<SmolDB>(config, io_context_.get_executor());
     db->startup();
 
@@ -238,7 +240,7 @@ TEST_F(ThroughputBenchmark, PureAsyncThroughput)
   // This test measures the backend's throughput from within the async world,
   // avoiding the sync/async bridge overhead of the main benchmark.
 
-  const int NUM_CONCURRENT_WORKERS = 100;
+  const int NUM_CONCURRENT_WORKERS = 256;
   const int OPS_PER_WORKER = 1000;
   const int TOTAL_OPS = NUM_CONCURRENT_WORKERS * OPS_PER_WORKER;
 
