@@ -23,7 +23,9 @@ SmolDB::SmolDB(const smoldb::DBConfig& config,
 
   // All managers are created here, and only here. This is critical for tests.
   disk_mgr_ = std::make_unique<Disk_mgr>(db_file_path_);
-  wal_mgr_ = std::make_unique<WAL_mgr>(wal_file_path_, executor_);
+  wal_mgr_ = std::make_unique<WAL_mgr>(wal_file_path_, executor_,
+                                       config.wal_mgr_batch_byte_threshold,
+                                       config.wal_mgr_batch_deadline_threshold);
   buffer_pool_ = std::make_unique<BufferPool>(config.buffer_pool_size_frames,
                                               disk_mgr_.get(), wal_mgr_.get(),
                                               config.buffer_pool_shard_count);

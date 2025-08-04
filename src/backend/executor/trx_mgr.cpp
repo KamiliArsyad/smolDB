@@ -57,17 +57,19 @@ TransactionID TransactionManager::begin()
   txn->set_prev_lsn(lsn);
 
   // Add to active transactions map
-  std::scoped_lock lock(active_txns_mutex_);
-  active_txns_.emplace(new_txn_id, std::move(txn));
+  auto& shard = get_txn_map_shard(new_txn_id);
+  std::scoped_lock lock(shard.shard_mutex_);
+  shard.active_txns.emplace(new_txn_id, std::move(txn));
 
   return new_txn_id;
 }
 
 Transaction* TransactionManager::get_transaction(TransactionID txn_id)
 {
-  std::scoped_lock lock(active_txns_mutex_);
-  auto it = active_txns_.find(txn_id);
-  if (it != active_txns_.end())
+  auto& shard = get_txn_map_shard(txn_id);
+  std::scoped_lock lock(shard.shard_mutex_);
+  auto it = shard.active_txns.find(txn_id);
+  if (it != shard.active_txns.end())
   {
     return it->second.get();
   }
@@ -95,8 +97,9 @@ void TransactionManager::commit(TransactionID txn_id)
   lock_manager_->release_all(txn);
 
   // Remove from active transactions map
-  std::scoped_lock lock(active_txns_mutex_);
-  active_txns_.erase(txn_id);
+  auto& shard = get_txn_map_shard(txn_id);
+  std::scoped_lock lock(shard.shard_mutex_);
+  shard.active_txns.erase(txn_id);
 }
 
 void TransactionManager::abort(TransactionID txn_id)
@@ -180,8 +183,9 @@ void TransactionManager::abort(TransactionID txn_id)
 
   lock_manager_->release_all(txn);
 
-  std::scoped_lock lock(active_txns_mutex_);
-  active_txns_.erase(txn_id);
+  auto& shard = get_txn_map_shard(txn_id);
+  std::scoped_lock lock(shard.shard_mutex_);
+  shard.active_txns.erase(txn_id);
 }
 
 asio::awaitable<void> TransactionManager::async_commit(TransactionID txn_id)
@@ -205,8 +209,9 @@ asio::awaitable<void> TransactionManager::async_commit(TransactionID txn_id)
   lock_manager_->release_all(txn);
 
   // Remove from active transactions map
-  std::scoped_lock lock(active_txns_mutex_);
-  active_txns_.erase(txn_id);
+  auto& shard = get_txn_map_shard(txn_id);
+  std::scoped_lock lock(shard.shard_mutex_);
+  shard.active_txns.erase(txn_id);
 }
 
 asio::awaitable<void> TransactionManager::async_abort(TransactionID txn_id)
@@ -300,8 +305,9 @@ asio::awaitable<void> TransactionManager::async_abort(TransactionID txn_id)
 
   lock_manager_->release_all(txn);
 
-  std::scoped_lock lock(active_txns_mutex_);
-  active_txns_.erase(txn_id);
+  auto& shard = get_txn_map_shard(txn_id);
+  std::scoped_lock lock(shard.shard_mutex_);
+  shard.active_txns.erase(txn_id);
 }
 
 void TransactionManager::apply_undo(LSN lsn, const UpdatePagePayload* payload)
