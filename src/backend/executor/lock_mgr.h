@@ -26,7 +26,8 @@ enum class LockMode
 class LockManager
 {
  public:
-  LockManager();
+  LockManager(size_t = std::thread::hardware_concurrency(),
+              int lock_timeout = 100);
 
   /**
    * @brief Acquires a shared lock on a specific RID for a transaction.

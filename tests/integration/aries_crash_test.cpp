@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <boost/asio/io_context.hpp>
+
 #include "backend/smoldb.h"
 
 using namespace smoldb;
@@ -19,7 +21,7 @@ class AriesCrashRecoveryTest
     // Phase 1: Create a durable DB state with one row.
     {
       smoldb::DBConfig config{test_dir_};
-      auto db = std::make_unique<SmolDB>(config);
+      auto db = std::make_unique<SmolDB>(config, io_context_.get_executor());
       db->startup();
       db->create_table(1, "users", make_simple_schema());
       Table<> *table = db->get_table("users");
@@ -34,7 +36,7 @@ class AriesCrashRecoveryTest
     // the row.
     {
       smoldb::DBConfig config(test_dir_);
-      auto db = std::make_unique<SmolDB>(config);
+      auto db = std::make_unique<SmolDB>(config, io_context_.get_executor());
       db->startup();
       Table<>* table = db->get_table("users");
       TransactionID loser_txn = db->begin_transaction();
@@ -56,6 +58,7 @@ class AriesCrashRecoveryTest
 
   std::filesystem::path test_dir_;
   RID rid_;
+  boost::asio::io_context io_context_;
 };
 
 #ifndef NDEBUG
@@ -67,7 +70,7 @@ TEST_P(AriesCrashRecoveryTest, RecoversCorrectlyAfterCrashingDuringRecovery)
   // This is expected to throw. The system is left in a "half-recovered" state.
   {
     smoldb::DBConfig config(test_dir_);
-    auto db = std::make_unique<SmolDB>(config);
+    auto db = std::make_unique<SmolDB>(config, io_context_.get_executor());
     ASSERT_THROW(db->startup_with_crash_point(crash_point), std::runtime_error);
   }
 
@@ -75,7 +78,7 @@ TEST_P(AriesCrashRecoveryTest, RecoversCorrectlyAfterCrashingDuringRecovery)
   std::unique_ptr<SmolDB> db;
   ASSERT_NO_THROW({
     smoldb::DBConfig config(test_dir_);
-    db = std::make_unique<SmolDB>(config);
+    db = std::make_unique<SmolDB>(config, io_context_.get_executor());
     db->startup();
   });
 

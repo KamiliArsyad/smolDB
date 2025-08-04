@@ -8,6 +8,16 @@ target_include_directories(server_lib
         ${CMAKE_SOURCE_DIR}/src/backend
 )
 
+include(FetchContent)
+FetchContent_Declare(
+        asio-grpc
+        GIT_REPOSITORY https://github.com/Tradias/asio-grpc.git
+        GIT_TAG v3.5.0
+)
+FetchContent_MakeAvailable(asio-grpc)
+
+find_package(Boost REQUIRED COMPONENTS context)
+
 target_link_libraries(server_lib
         PUBLIC
         -Wl,--start-group
@@ -18,8 +28,9 @@ target_link_libraries(server_lib
         idx_lib
         proc_lib
         -Wl,--end-group
-        gRPC::grpc++_reflection
         smoldb_proto
+        asio-grpc::asio-grpc
+        Boost::context
 )
 
 add_executable(smolDB_server main.cpp server.cpp)

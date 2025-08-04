@@ -16,8 +16,8 @@ constexpr size_t TUPLE_LENGTH_PREFIX_SIZE = sizeof(uint32_t);
 // logged atomically.
 struct LogPayloadRegion
 {
-  uint32_t offset;
-  unsigned long length;
+  uint16_t offset;
+  uint16_t length;
 };
 
 HeapFile::HeapFile(BufferPool *buffer_pool, WAL_mgr *wal_mgr,
@@ -420,4 +420,172 @@ void HeapFile::full_scan(std::vector<std::vector<std::byte>> &out) const
     out.push_back(tuple_data);
     rid.slot++;  // Start search from next slot
   }
+}
+
+boost::asio::awaitable<RID> HeapFile::async_append(
+    Transaction *txn, std::span<const std::byte> tuple_data)
+{
+  // Implementation is the same as `append`, just async logging
+  if (tuple_data.size() > max_tuple_size_)
+  {
+    throw std::runtime_error("Tuple size exceeds max tuple size");
+  }
+
+  PageID current_page_id = last_page_id_.load();
+  PageGuard guard = buffer_pool_->fetch_page(current_page_id);
+  std::optional<uint16_t> free_slot_idx;
+
+  while (true)
+  {
+    {
+      auto page = guard.write();
+      free_slot_idx = find_first_clear_bit(get_bitmap_ptr(*page));
+      if (free_slot_idx.has_value())
+      {
+        break;
+      }
+    }
+    current_page_id++;
+    guard = buffer_pool_->fetch_page(current_page_id);
+  }
+
+  last_page_id_.store(current_page_id);
+  RID new_rid = {current_page_id, *free_slot_idx};
+
+  // Log the update
+  auto page_writer = guard.write();
+  std::byte *slot_ptr_for_log = get_slot_ptr(*page_writer, *free_slot_idx);
+  uint16_t region_offset =
+      static_cast<uint16_t>(reinterpret_cast<uintptr_t>(slot_ptr_for_log) -
+                            reinterpret_cast<uintptr_t>(page_writer->data()));
+  uint16_t region_length = static_cast<uint16_t>(tuple_data.size());
+
+  // Build an UPDATE batch: payload = UpdatePagePayload, extra = bef+aft
+  auto batch =
+      wal_mgr_->make_batch(UPDATE, txn->get_id(), txn->get_prev_lsn(),
+                           sizeof(UpdatePagePayload), 2 * region_length);
+
+  auto *upd = batch.payload<UpdatePagePayload>();
+  *upd = {current_page_id, region_offset, region_length};
+
+  // before image: whatever currently lives in the slot
+  std::memcpy(const_cast<std::byte *>(upd->bef()),
+              page_writer->data() + region_offset, region_length);
+
+  // after image: incoming tuple data
+  std::memcpy(const_cast<std::byte *>(upd->aft()), tuple_data.data(),
+              region_length);
+
+  LSN lsn = wal_mgr_->append_record_async(batch.done());
+  txn->set_prev_lsn(lsn);
+
+  set_slot_bit(get_bitmap_ptr(*page_writer), *free_slot_idx);
+  std::byte *slot_ptr = get_slot_ptr(*page_writer, *free_slot_idx);
+  set_tuple_metadata(slot_ptr, tuple_data.size(), false);
+  std::memcpy(get_tuple_data_ptr(slot_ptr), tuple_data.data(),
+              tuple_data.size());
+  page_writer->hdr.page_lsn = lsn;
+  guard.mark_dirty();
+
+  co_return new_rid;
+}
+
+boost::asio::awaitable<bool> HeapFile::async_update(
+    Transaction *txn, RID rid, std::span<const std::byte> new_tuple_data)
+{
+  if (new_tuple_data.size() > max_tuple_size_)
+  {
+    throw std::invalid_argument("New tuple is larger than max_tuple_size");
+  }
+  assert(txn != nullptr && "Cannot perform update without a transaction");
+
+  PageGuard guard = buffer_pool_->fetch_page(rid.page_id);
+  auto pristine_page_writer = guard.write();
+
+  if (rid.slot >= slots_per_page_) co_return false;
+
+  // Check bitmap to ensure row exists
+  const std::byte *bitmap = get_bitmap_ptr(*pristine_page_writer);
+  bool is_set = static_cast<bool>((bitmap[rid.slot / 8] >> (rid.slot % 8)) &
+                                  std::byte{1});
+  if (!is_set) co_return false;
+
+  // The region is just the slot itself, since the bitmap doesn't change
+  std::byte *slot_ptr = get_slot_ptr(*pristine_page_writer, rid.slot);
+
+  if (is_deleted(slot_ptr)) co_return false;
+
+  LogPayloadRegion region = {
+      .offset = static_cast<uint16_t>(slot_ptr - pristine_page_writer->data()),
+      .length = static_cast<uint16_t>(slot_size_)};
+
+  // Staging phase
+  std::vector<std::byte> after_image_buffer(region.length);
+  set_tuple_metadata(after_image_buffer.data(), new_tuple_data.size(), false);
+  std::memcpy(get_tuple_data_ptr(after_image_buffer.data()),
+              new_tuple_data.data(), new_tuple_data.size());
+
+  // Log-Ahead phase
+  auto builder =
+      wal_mgr_->make_batch(UPDATE, txn->get_id(), txn->get_prev_lsn(),
+                           sizeof(UpdatePagePayload), 2 * region.length);
+  auto *upd = builder.payload<UpdatePagePayload>();
+  *upd = {rid.page_id, region.offset, region.length};
+
+  std::memcpy(const_cast<std::byte *>(upd->bef()),
+              pristine_page_writer->data() + region.offset, region.length);
+
+  std::memcpy(const_cast<std::byte *>(upd->aft()), after_image_buffer.data(),
+              region.length);
+
+  LSN lsn = wal_mgr_->append_record_async(builder.done());
+  txn->set_prev_lsn(lsn);
+
+  // Apply phase
+  pristine_page_writer->hdr.page_lsn = lsn;
+  std::memcpy(pristine_page_writer->data() + region.offset,
+              after_image_buffer.data(), region.length);
+  guard.mark_dirty();
+
+  co_return true;
+}
+
+boost::asio::awaitable<bool> HeapFile::async_delete(Transaction *txn, RID rid)
+{
+  // Similar to delete_row, just with async logging
+  PageGuard guard = buffer_pool_->fetch_page(rid.page_id);
+  auto page = guard.write();
+  std::byte *slot_ptr = get_slot_ptr(*page, rid.slot);
+
+  if (!is_deleted(slot_ptr))
+  {
+    size_t len = get_real_length(slot_ptr);
+    std::vector<std::byte> old_data(len);
+    std::memcpy(old_data.data(), get_tuple_data_ptr(slot_ptr), len);
+
+    uint16_t region_offset =
+        static_cast<uint16_t>(reinterpret_cast<uintptr_t>(slot_ptr) -
+                              reinterpret_cast<uintptr_t>(page->data()));
+
+    auto batch =
+        wal_mgr_->make_batch(UPDATE, txn->get_id(), txn->get_prev_lsn(),
+                             sizeof(UpdatePagePayload), len * 2);
+
+    auto *upd = batch.payload<UpdatePagePayload>();
+    *upd = {rid.page_id, region_offset, static_cast<uint16_t>(len)};
+
+    // before image: tuple as it exists now
+    std::memcpy(const_cast<std::byte *>(upd->bef()), old_data.data(), len);
+    // after image: nothing (tombstone) – zero‑fill for determinism
+    std::memset(const_cast<std::byte *>(upd->aft()), 0, len);
+
+    LSN lsn = wal_mgr_->append_record_async(batch.done());
+    txn->set_prev_lsn(lsn);
+
+    set_tuple_metadata(slot_ptr, len, true);
+    page->hdr.page_lsn = lsn;
+    guard.mark_dirty();
+    co_return true;
+  }
+  co_return false;
 }

@@ -303,6 +303,8 @@ class Table
     // Note: heap_file_ is not serialized, it's reconstructed when needed
   }
 
+  void validate_row_schema(const Row& row) const;
+
  public:
   Table() = default;
   ~Table();
@@ -390,6 +392,17 @@ class Table
 
   // Delete a row from the table
   bool delete_row(TransactionID txn_id, RID rid);
+
+  // Insert a row into the table
+  boost::asio::awaitable<RID> async_insert_row(TransactionID txn_id,
+                                               const Row& row);
+
+  // Update a row in the table
+  boost::asio::awaitable<bool> async_update_row(TransactionID txn_id, RID rid,
+                                                const Row& new_row);
+
+  // Delete a row from the table
+  boost::asio::awaitable<bool> async_delete_row(TransactionID txn_id, RID rid);
 
   /**
    * @brief Finds the RID for a given index key.

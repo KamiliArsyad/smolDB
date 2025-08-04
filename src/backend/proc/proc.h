@@ -1,6 +1,7 @@
 #ifndef SMOLDB_PROC_H
 #define SMOLDB_PROC_H
 
+#include <boost/asio/awaitable.hpp>
 #include <map>
 #include <string>
 
@@ -77,9 +78,9 @@ class TransactionProcedure
    * @return A status indicating whether the transaction should be committed or
    * aborted.
    */
-  virtual ProcedureStatus execute(TransactionContext& ctx,
-                                  const ProcedureParams& params,
-                                  ProcedureResult& result) = 0;
+  virtual boost::asio::awaitable<ProcedureStatus> execute(
+      TransactionContext& ctx, const ProcedureParams& params,
+      ProcedureResult& result) = 0;
 };
 }  // namespace smoldb
 

@@ -1,5 +1,6 @@
 #include "trx_mgr.h"
 
+#include <boost/asio/use_awaitable.hpp>
 #include <cstring>
 #include <map>
 #include <set>
@@ -11,6 +12,7 @@
 #include "../storage/db_hdr_page.h"
 
 using namespace smoldb;
+namespace asio = boost::asio;
 
 TransactionManager::TransactionManager(LockManager* lock_manager,
                                        WAL_mgr* wal_manager,
@@ -49,15 +51,9 @@ TransactionID TransactionManager::begin()
 
   auto txn = std::make_unique<Transaction>(new_txn_id);
 
-  LogRecordHeader hdr{};
-  hdr.lsn = 0;
-  hdr.prev_lsn = 0;
-  hdr.txn_id = new_txn_id;
-  hdr.type = BEGIN;
-  hdr.lr_length = sizeof(LogRecordHeader);
-
-  // Write BEGIN record to WAL
-  LSN lsn = wal_manager_->append_record(hdr);
+  // Write BEGIN record to WAL asynchronously. We don't need to wait for it.
+  auto b = wal_manager_->make_batch(BEGIN, new_txn_id, 0, 0);
+  LSN lsn = wal_manager_->append_record_async(b.done());
   txn->set_prev_lsn(lsn);
 
   // Add to active transactions map
@@ -111,6 +107,8 @@ void TransactionManager::abort(TransactionID txn_id)
     return;  // Already completed
   }
 
+  wal_manager_->flush_to_lsn(txn->get_prev_lsn());
+
   // We undo in reverse order of operations.
   const auto& index_undo_log = txn->get_index_undo_log();
   for (auto it = index_undo_log.rbegin(); it != index_undo_log.rend(); ++it)
@@ -134,7 +132,8 @@ void TransactionManager::abort(TransactionID txn_id)
   {
     LogRecordHeader hdr;
     std::vector<char> payload_vec;
-    assert(wal_manager_->get_record(current_lsn, hdr, payload_vec));
+    bool ok = wal_manager_->get_record(current_lsn, hdr, payload_vec);
+    assert(ok);
     LSN next_lsn_in_chain = 0;
 
     if (hdr.type == CLR)
@@ -178,6 +177,126 @@ void TransactionManager::abort(TransactionID txn_id)
   abort_hdr.prev_lsn = txn->get_prev_lsn();
   abort_hdr.lr_length = sizeof(LogRecordHeader);
   wal_manager_->append_record(abort_hdr);
+
+  lock_manager_->release_all(txn);
+
+  std::scoped_lock lock(active_txns_mutex_);
+  active_txns_.erase(txn_id);
+}
+
+asio::awaitable<void> TransactionManager::async_commit(TransactionID txn_id)
+{
+  Transaction* txn = get_transaction(txn_id);
+  if (!txn)
+  {
+    co_return;
+  }
+
+  // Write COMMIT record to WAL
+  auto b = wal_manager_->make_batch(COMMIT, txn_id, txn->get_prev_lsn(), 0);
+  LSN lsn = wal_manager_->append_record_async(b.done());
+
+  // Suspend until the commit record is durable.
+  co_await wal_manager_->async_wait_for_flush(lsn, asio::use_awaitable);
+
+  // --- Resumption Point ---
+
+  // Release all locks
+  lock_manager_->release_all(txn);
+
+  // Remove from active transactions map
+  std::scoped_lock lock(active_txns_mutex_);
+  active_txns_.erase(txn_id);
+}
+
+asio::awaitable<void> TransactionManager::async_abort(TransactionID txn_id)
+{
+  Transaction* txn = get_transaction(txn_id);
+  if (!txn)
+  {
+    co_return;  // Already completed
+  }
+
+  // Before starting the undo, ensure that all log records
+  // written by this transaction so far are durable and indexed. We do this
+  // by waiting for the most recent LSN to be flushed.
+  LSN last_known_lsn = txn->get_prev_lsn();
+  if (last_known_lsn > 0)
+  {
+    co_await wal_manager_->async_wait_for_flush(last_known_lsn,
+                                                asio::use_awaitable);
+  }
+  // --- RESUMPTION POINT ---
+  // Now it is safe to read from the WAL.
+
+  // We undo in reverse order of operations.
+  const auto& index_undo_log = txn->get_index_undo_log();
+  for (auto it = index_undo_log.rbegin(); it != index_undo_log.rend(); ++it)
+  {
+    const auto& action = *it;
+    switch (action.type)
+    {
+      case IndexUndoType::REVERSE_INSERT:
+        // The original operation was an insert, so we must delete.
+        action.index->delete_entry(action.row);
+        break;
+      case IndexUndoType::REVERSE_DELETE:
+        // The original operation was a delete, so we must re-insert.
+        action.index->insert_entry(action.row, action.rid);
+        break;
+    }
+  }
+
+  LSN current_lsn = txn->get_prev_lsn();
+  while (current_lsn != 0)
+  {
+    LogRecordHeader hdr;
+    std::vector<char> payload_vec;
+    bool ok = wal_manager_->get_record(current_lsn, hdr, payload_vec);
+    assert(ok);
+    LSN next_lsn_in_chain = 0;
+
+    if (hdr.type == CLR)
+    {
+      next_lsn_in_chain =
+          reinterpret_cast<const CLR_Payload*>(payload_vec.data())->undoNextLSN;
+    }
+    else
+    {
+      next_lsn_in_chain = hdr.prev_lsn;
+      if (hdr.type == UPDATE)
+      {
+        const auto* upd =
+            reinterpret_cast<const UpdatePagePayload*>(payload_vec.data());
+
+        auto builder =
+            wal_manager_->make_batch(CLR, hdr.txn_id, txn->get_prev_lsn(),
+                                     sizeof(CLR_Payload), upd->length);
+
+        auto* clr = builder.payload<CLR_Payload>();
+        *clr = {upd->page_id, upd->offset, upd->length, hdr.prev_lsn};
+        std::memcpy(const_cast<std::byte*>(clr->compensation_data()),
+                    upd->bef(), upd->length);
+
+        // Append CLR asynchronously, no need to wait for flush yet.
+        LSN clr_lsn = wal_manager_->append_record_async(builder.done());
+        txn->set_prev_lsn(clr_lsn);
+
+        apply_undo(clr_lsn, upd);
+      }
+    }
+    current_lsn = next_lsn_in_chain;
+  }
+
+  // Write the final ABORT record for the transaction and wait for it.
+  auto abort_builder = wal_manager_->make_batch(
+      ABORT, txn_id, txn->get_prev_lsn(), /*payload*/ 0);
+
+  LSN abort_lsn = wal_manager_->append_record_async(abort_builder.done());
+
+  co_await wal_manager_->async_wait_for_flush(abort_lsn, asio::use_awaitable);
+
+  // --- Resumption Point ---
 
   lock_manager_->release_all(txn);
 

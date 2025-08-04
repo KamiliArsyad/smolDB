@@ -6,26 +6,36 @@
 #include <memory>
 #include <string>
 
-#include "smoldb.h"         // For ProcedureManager
+#include "agrpc/asio_grpc.hpp"
 #include "smoldb.grpc.pb.h"
+#include "smoldb.h"
 
-// To be replaced with a native coroutine version in the future.
-#define SMOLDB_USE_CALLBACK_API 1
+// Forward declare to keep header clean
+namespace smoldb
+{
+class ProcedureManager;
+}
 
-#if SMOLDB_USE_CALLBACK_API
-class GrpcCallbackService final : public smoldb::rpc::SmolDBService::CallbackService
+class GrpcServer
 {
  public:
-  explicit GrpcCallbackService(smoldb::ProcedureManager* proc_mgr);
+  GrpcServer(smoldb::ProcedureManager* proc_mgr,
+             boost::asio::any_io_executor executor);
 
-  grpc::ServerUnaryReactor* ExecuteProcedure(
-      grpc::CallbackServerContext* context,
-      const smoldb::rpc::ExecuteProcedureRequest* request,
-      smoldb::rpc::ExecuteProcedureResponse* response) override;
+  void run(const std::string& server_address);
+  void stop();
 
  private:
-  smoldb::ProcedureManager* proc_mgr_;  // Not owned
+  boost::asio::awaitable<void> handle_execute_procedure(
+      agrpc::ServerRPC<
+          &smoldb::rpc::SmolDBService::AsyncService::RequestExecuteProcedure>&
+          rpc,
+      smoldb::rpc::ExecuteProcedureRequest& request);
+
+  smoldb::ProcedureManager* proc_mgr_;
+  boost::asio::any_io_executor executor_;
+  std::unique_ptr<grpc::Server> server_;
+  std::unique_ptr<agrpc::GrpcContext> grpc_context_;
 };
-#endif  // SMOLDB_USE_CALLBACK_API
 
 #endif  // SMOLDB_SERVER_H

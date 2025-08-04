@@ -193,6 +193,38 @@ void Table<HeapFileT>::Iterator::find_next()
 }
 
 template <typename HeapFileT>
+void Table<HeapFileT>::validate_row_schema(const Row& row) const
+{
+  const Schema& row_schema = row.get_schema();
+  if (row_schema.size() != schema_.size())
+  {
+    throw std::invalid_argument("Row schema column count mismatch. Expected " +
+                                std::to_string(schema_.size()) + ", got " +
+                                std::to_string(row_schema.size()));
+  }
+
+  for (size_t i = 0; i < schema_.size(); ++i)
+  {
+    if (row_schema[i].type != schema_[i].type)
+    {
+      throw std::invalid_argument("Row schema type mismatch for column '" +
+                                  schema_[i].name + "' at index " +
+                                  std::to_string(i));
+    }
+    if (schema_[i].type == Col_type::STRING)
+    {
+      const auto& val = boost::get<std::string>(row.get_value(i));
+      if (val.length() > schema_[i].size)
+      {
+        throw std::invalid_argument("String value for column '" +
+                                    schema_[i].name + "' exceeds max size of " +
+                                    std::to_string(schema_[i].size));
+      }
+    }
+  }
+}
+
+template <typename HeapFileT>
 Table<HeapFileT>::~Table() = default;
 
 template <typename HeapFileT>
@@ -231,11 +263,7 @@ RID Table<HeapFileT>::insert_row(TransactionID txn_id, const Row& row)
     throw std::runtime_error("Table not properly initialized");
   }
 
-  // Validate row schema matches table schema
-  if (row.get_schema().size() != schema_.size())
-  {
-    throw std::invalid_argument("Row schema doesn't match table schema");
-  }
+  validate_row_schema(row);
 
   // Convert row to bytes and store
   auto row_bytes = row.to_bytes();
@@ -280,10 +308,7 @@ bool Table<HeapFileT>::update_row(TransactionID txn_id, RID rid,
     throw std::runtime_error("Table not properly initialized");
   }
 
-  if (new_row.get_schema().size() != schema_.size())
-  {
-    throw std::invalid_argument("Row schema doesn't match table schema");
-  }
+  validate_row_schema(new_row);
 
   auto row_bytes = new_row.to_bytes();
 
@@ -371,6 +396,149 @@ bool Table<HeapFileT>::delete_row(TransactionID txn_id, RID rid)
   }
 
   return heap_file_->delete_row(txn, rid);
+}
+
+template <typename HeapFileT>
+boost::asio::awaitable<RID> Table<HeapFileT>::async_insert_row(
+    TransactionID txn_id, const Row& row)
+{
+  if (!txn_manager_)
+  {
+    throw std::runtime_error("TransactionManager not available in Table");
+  }
+  Transaction* txn = txn_manager_->get_transaction(txn_id);
+  if (!txn)
+  {
+    throw std::runtime_error("Transaction not active");
+  }
+
+  if (!heap_file_)
+  {
+    throw std::runtime_error("Table not properly initialized");
+  }
+
+  validate_row_schema(row);
+
+  auto row_bytes = row.to_bytes();
+
+  // The async_append operation will perform the disk/buffer modifications.
+  RID new_rid = co_await heap_file_->async_append(txn, row_bytes);
+
+  // After the physical insert, we acquire the lock and update the index.
+  lock_manager_->acquire_exclusive(txn, new_rid);
+
+  if (index_)
+  {
+    index_->insert_entry(row, new_rid);
+    txn->add_index_undo(
+        {IndexUndoType::REVERSE_INSERT, index_.get(), row, new_rid});
+  }
+
+  txn->cache_row(new_rid, row);
+  co_return new_rid;
+}
+
+template <typename HeapFileT>
+boost::asio::awaitable<bool> Table<HeapFileT>::async_update_row(
+    TransactionID txn_id, RID rid, const Row& new_row)
+{
+  if (!txn_manager_)
+  {
+    throw std::runtime_error("TransactionManager not available in Table");
+  }
+  Transaction* txn = txn_manager_->get_transaction(txn_id);
+  if (!txn)
+  {
+    throw std::runtime_error("Transaction not active");
+  }
+
+  if (!heap_file_)
+  {
+    throw std::runtime_error("Table not properly initialized");
+  }
+
+  validate_row_schema(new_row);
+
+  // Acquire exclusive lock before any modification
+  if (!lock_manager_->acquire_exclusive(txn, rid))
+  {
+    // In a real system, this would likely throw or return a status.
+    // For now, we mirror the previous simple return.
+    co_return false;
+  }
+
+  // Handle index update BEFORE heap file update
+  if (index_)
+  {
+    Row old_row(schema_);
+    std::vector<std::byte> old_bytes;
+
+    if (!txn->get_cached_row(rid, old_row))
+    {
+      if (!heap_file_->get(txn, rid, old_bytes))
+      {
+        co_return false;  // Row doesn't exist or is a tombstone.
+      }
+      old_row = Row::from_bytes(old_bytes, schema_);
+    }
+
+    if (index_->update_entry(old_row, new_row, rid))
+    {
+      txn->add_index_undo(
+          {IndexUndoType::REVERSE_DELETE, index_.get(), old_row, rid});
+      txn->add_index_undo(
+          {IndexUndoType::REVERSE_INSERT, index_.get(), new_row, rid});
+    }
+  }
+
+  txn->cache_row(rid, new_row);
+  auto row_bytes = new_row.to_bytes();
+  co_return co_await heap_file_->async_update(txn, rid, row_bytes);
+}
+
+template <typename HeapFileT>
+boost::asio::awaitable<bool> Table<HeapFileT>::async_delete_row(
+    TransactionID txn_id, RID rid)
+{
+  if (!txn_manager_)
+  {
+    throw std::runtime_error("TransactionManager not available in Table");
+  }
+  Transaction* txn = txn_manager_->get_transaction(txn_id);
+  if (!txn)
+  {
+    throw std::runtime_error("Transaction not active");
+  }
+
+  if (!heap_file_)
+  {
+    throw std::runtime_error("Table not properly initialized");
+  }
+
+  txn->remove_cache(rid);
+
+  // Acquire exclusive lock before any modification
+  if (!lock_manager_->acquire_exclusive(txn, rid))
+  {
+    co_return false;
+  }
+
+  if (index_)
+  {
+    std::vector<std::byte> old_bytes;
+    if (!heap_file_->get(txn, rid, old_bytes))
+    {
+      co_return false;  // Row not found, nothing to delete.
+    }
+
+    Row old_row = Row::from_bytes(old_bytes, schema_);
+    index_->delete_entry(old_row);
+
+    txn->add_index_undo(
+        {IndexUndoType::REVERSE_DELETE, index_.get(), old_row, rid});
+  }
+
+  co_return co_await heap_file_->async_delete(txn, rid);
 }
 
 template <typename HeapFileT>

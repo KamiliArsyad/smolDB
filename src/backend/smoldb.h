@@ -1,6 +1,8 @@
 #ifndef SMOLDB_H
 #define SMOLDB_H
 
+#include <boost/asio/any_io_executor.hpp>
+#include <boost/asio/awaitable.hpp>
 #include <filesystem>
 #include <memory>
 
@@ -25,7 +27,8 @@ const size_t BUFFER_SIZE_FOR_TEST = std::thread::hardware_concurrency();
 class SmolDB
 {
  public:
-  explicit SmolDB(const smoldb::DBConfig& config);
+  explicit SmolDB(const smoldb::DBConfig& config,
+                  boost::asio::any_io_executor executor);
   ~SmolDB();
 
   // No copy/move
@@ -102,6 +105,16 @@ class SmolDB
    */
   void abort_transaction(TransactionID txn_id);
 
+  /**
+   * @brief Asynchronously commits an existing transaction.
+   */
+  boost::asio::awaitable<void> async_commit_transaction(TransactionID txn_id);
+
+  /**
+   * @brief Asynchronously aborts an existing transaction.
+   */
+  boost::asio::awaitable<void> async_abort_transaction(TransactionID txn_id);
+
  private:
   friend class HeapFileTest;  // Allow test to access internals
   friend class AriesTest;
@@ -112,6 +125,8 @@ class SmolDB
   std::filesystem::path catalog_file_path_;
 
   bool is_shutdown_ = false;
+
+  boost::asio::any_io_executor executor_;
 
   std::unique_ptr<Disk_mgr> disk_mgr_;
   std::unique_ptr<WAL_mgr> wal_mgr_;

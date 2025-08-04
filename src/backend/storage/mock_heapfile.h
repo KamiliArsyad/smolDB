@@ -47,6 +47,23 @@ class MockHeapFile
 
   bool delete_row(Transaction* txn, RID rid) { return true; }
 
+  boost::asio::awaitable<RID> async_append(
+      Transaction *txn, std::span<const std::byte> tuple_data)
+  {
+    co_return true;
+  }
+
+  boost::asio::awaitable<bool> async_update(
+      Transaction *txn, RID rid, std::span<const std::byte> new_tuple_data)
+  {
+    co_return true;
+  }
+
+  boost::asio::awaitable<bool> async_delete(Transaction *txn, RID rid)
+  {
+    co_return true;
+  }
+
   bool get_next_tuple(RID& rid, std::vector<std::byte>& out_tuple) const
   {
     return true;

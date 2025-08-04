@@ -1,5 +1,6 @@
 #ifndef HEAPFILE_H
 #define HEAPFILE_H
+#include <boost/asio/awaitable.hpp>
 #include <filesystem>
 #include <optional>
 #include <ostream>
@@ -57,6 +58,16 @@ class HeapFile
   // Updates a tuple by RID. Returns false if RID is invalid or tuple too large.
   bool update(Transaction *txn, RID rid,
               std::span<const std::byte> new_tuple_data);
+
+  // Appends and returns RID of tuple
+  boost::asio::awaitable<RID> async_append(
+      Transaction *txn, std::span<const std::byte> tuple_data);
+
+  // Updates a tuple by RID. Returns false if RID is invalid or tuple too large.
+  boost::asio::awaitable<bool> async_update(
+      Transaction *txn, RID rid, std::span<const std::byte> new_tuple_data);
+
+  boost::asio::awaitable<bool> async_delete(Transaction *txn, RID rid);
 
   // Deletes a tuple by RID. Returns false if RID is invalid.
   bool delete_row(Transaction *txn, RID rid);

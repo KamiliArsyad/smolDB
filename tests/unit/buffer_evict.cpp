@@ -1,29 +1,22 @@
 #include <gtest/gtest.h>
 #define private public  // <- test-only peek
+#include <boost/asio/io_context.hpp>
+
 #include "bfrpl.h"
 #include "dsk_mgr.h"
 #include "wal_mgr.h"
 #undef private
-
-using namespace smoldb;
 
 /* -------- helpers --------------------------------------------------- */
 static auto get_disk_mgr(std::filesystem::path& tmp_path)
 {
   const auto path = tmp_path / "disk.dat";
   std::remove(path.c_str());
-  return new Disk_mgr(path);
-}
-
-static auto get_wal_mgr(std::filesystem::path& tmp_path)
-{
-  const auto path = tmp_path / "wal.dat";
-  std::remove(path.c_str());
-  return new WAL_mgr(path);
+  return new smoldb::Disk_mgr(path);
 }
 
 // Helper to get a frame pointer. Requires locking the corresponding shard.
-static Frame* get_frame_ptr(BufferPool& bp, PageID pid)
+static smoldb::Frame* get_frame_ptr(smoldb::BufferPool& bp, smoldb::PageID pid)
 {
   auto& shard = bp.get_shard(pid);
   std::scoped_lock lock(shard.mutex_);
@@ -42,14 +35,17 @@ class BufferPoolTest : public ::testing::Test
   // Use a fixed number of shards for predictable page->shard mapping.
   static constexpr size_t SHARD_COUNT = 4;
   std::filesystem::path temp_dir_path;
-  Disk_mgr* disk_mgr;
-  WAL_mgr* wal_mgr;
+  smoldb::Disk_mgr* disk_mgr;
+  smoldb::WAL_mgr* wal_mgr;
 
+  boost::asio::io_context io_context_;
   void SetUp() override
   {
     temp_dir_path = std::filesystem::temp_directory_path();
     disk_mgr = get_disk_mgr(temp_dir_path);
-    wal_mgr = get_wal_mgr(temp_dir_path);
+    const auto path = temp_dir_path / "wal.dat";
+    std::remove(path.c_str());
+    wal_mgr = new smoldb::WAL_mgr(path, io_context_.get_executor());
   }
 
   void TearDown() override
@@ -59,7 +55,7 @@ class BufferPoolTest : public ::testing::Test
   }
 
   // Helper to get a PageID that is guaranteed to fall into a specific shard.
-  PageID page_in_shard(size_t shard_idx, size_t page_num)
+  smoldb::PageID page_in_shard(size_t shard_idx, size_t page_num)
   {
     return (page_num * SHARD_COUNT) + shard_idx;
   }
@@ -67,12 +63,12 @@ class BufferPoolTest : public ::testing::Test
 
 TEST_F(BufferPoolTest, PinUnpinCounts)
 {
-  BufferPool bp{10, disk_mgr, wal_mgr, SHARD_COUNT};
-  PageID pid = page_in_shard(0, 1);  // Page 1, in shard 0
+  smoldb::BufferPool bp{10, disk_mgr, wal_mgr, SHARD_COUNT};
+  smoldb::PageID pid = page_in_shard(0, 1);  // Page 1, in shard 0
 
   {
     auto g1 = bp.fetch_page(pid);
-    Frame* f = get_frame_ptr(bp, pid);
+    smoldb::Frame* f = get_frame_ptr(bp, pid);
     ASSERT_NE(f, nullptr);
     EXPECT_EQ(f->pin_count.load(), 1);
 
@@ -88,11 +84,11 @@ TEST_F(BufferPoolTest, PinUnpinCounts)
 TEST_F(BufferPoolTest, EvictionInShard)
 {
   // Create a pool where each shard has capacity for exactly 1 page.
-  BufferPool bp{SHARD_COUNT, disk_mgr, wal_mgr, SHARD_COUNT};
+  smoldb::BufferPool bp{SHARD_COUNT, disk_mgr, wal_mgr, SHARD_COUNT};
 
-  PageID pid1_shard0 = page_in_shard(0, 1);
-  PageID pid2_shard0 = page_in_shard(0, 2);
-  PageID pid1_shard1 = page_in_shard(1, 1);
+  smoldb::PageID pid1_shard0 = page_in_shard(0, 1);
+  smoldb::PageID pid2_shard0 = page_in_shard(0, 2);
+  smoldb::PageID pid1_shard1 = page_in_shard(1, 1);
 
   // Load one page into shard 0.
   {
@@ -120,10 +116,10 @@ TEST_F(BufferPoolTest, EvictionInShard)
 TEST_F(BufferPoolTest, MRUTouchOnHit)
 {
   // Capacity of 2 per shard.
-  BufferPool bp{2 * SHARD_COUNT, disk_mgr, wal_mgr, SHARD_COUNT};
+  smoldb::BufferPool bp{2 * SHARD_COUNT, disk_mgr, wal_mgr, SHARD_COUNT};
 
-  PageID p1 = page_in_shard(0, 1);
-  PageID p2 = page_in_shard(0, 2);
+  smoldb::PageID p1 = page_in_shard(0, 1);
+  smoldb::PageID p2 = page_in_shard(0, 2);
 
   {
     bp.fetch_page(p1);

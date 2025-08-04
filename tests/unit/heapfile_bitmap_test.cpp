@@ -2,6 +2,8 @@
 
 // Make private members of HeapFile public for testing
 #define private public
+#include <boost/asio/io_context.hpp>
+
 #include "heapfile.h"
 #include "smoldb.h"
 #undef private
@@ -18,7 +20,7 @@ class HeapFileBitmapTest : public ::testing::Test
     std::filesystem::create_directories(test_dir);
 
     smoldb::DBConfig config{test_dir, BUFFER_SIZE_FOR_TEST};
-    db = std::make_unique<SmolDB>(config);
+    db = std::make_unique<SmolDB>(config, io_context_.get_executor());
     db->startup();
   }
 
@@ -31,6 +33,7 @@ class HeapFileBitmapTest : public ::testing::Test
 
   std::filesystem::path test_dir;
   std::unique_ptr<SmolDB> db;
+  boost::asio::io_context io_context_;
 };
 
 TEST_F(HeapFileBitmapTest, BitHelpers)
